@@ -39,6 +39,12 @@ export const ink = {
   faint: 'oklch(55% 0.02 75)',
   /** Text on accent/ink fills. Deliberately warm off-white, NOT pure white. Vault.dc.html:30 */
   inverse: 'oklch(99% 0.005 90)',
+  /** Inactive sidebar nav item label. Vault.dc.html:214 */
+  navInactive: 'oklch(40% 0.02 75)',
+  /** Inactive sidebar nav item leading dot. Vault.dc.html:216 */
+  navIconInactive: 'oklch(70% 0.02 75)',
+  /** Inactive filter pill label. Vault.dc.html:249-252 */
+  controlText: 'oklch(35% 0.02 75)',
 } as const;
 
 /**
@@ -88,6 +94,14 @@ export const fontSize = {
   readerTitle: '34px',
   readerBody: '17.5px',
   readerBodyMobile: '18.5px', // GROWS on mobile — deliberate, README:37
+  /** Sidebar/top-bar product-name wordmark. Vault.dc.html:31,44 */
+  brand: '15px',
+} as const;
+
+/** Unitless line-heights that are pinned exact values, not eyeballed. */
+export const lineHeight = {
+  cardTitle: '1.35', // Vault.dc.html:104
+  cardExcerpt: '1.5', // Vault.dc.html:105
 } as const;
 
 export const radius = {
@@ -114,11 +128,39 @@ export const layout = {
   libraryGrid: 'repeat(3, minmax(0, 1fr))',
   libraryGridMobile: '1fr',
   libraryGap: '20px',
+  /** Sidebar brand-mark tile. Vault.dc.html:43 (desktop), :30 (mobile top bar) */
+  logoTileDesktop: '26px',
+  logoTileMobile: '24px',
+  /** Mobile top-bar hamburger tile. Vault.dc.html:33 */
+  hamburgerTile: '34px',
+  /** Mobile sidebar-overlay close tile. Vault.dc.html:47 */
+  closeTile: '30px',
+  /** Sidebar nav item leading dot. Vault.dc.html:58 */
+  navDotSize: '7px',
 } as const;
 
 export const motion = {
   cardHover: 'translateY(-2px)', // no shadow change — Vault.dc.html:101
   cardTransition: 'transform .15s',
+} as const;
+
+/**
+ * Padding/gap values that recur across the sidebar, top bar, doc card, and library screen.
+ * Each cites the handoff line it came from — see packages/tokens/src/index.ts header comment.
+ */
+export const spacing = {
+  cardPadding: '20px', // Vault.dc.html:102
+  cardGap: '12px', // Vault.dc.html:102 (internal doc-card flex gap)
+  sidebarPadding: '22px 16px', // Vault.dc.html:40
+  sidebarSectionGap: '26px', // Vault.dc.html:40
+  brandGap: '9px', // Vault.dc.html:29,42
+  navListGap: '2px', // Vault.dc.html:55
+  navItemGap: '11px', // Vault.dc.html:57
+  navItemPadding: '9px 10px', // Vault.dc.html:57
+  topBarPadding: '14px 18px', // Vault.dc.html:28
+  filterRowGap: '8px', // Vault.dc.html:93
+  filterPillPadding: '7px 15px', // Vault.dc.html:95
+  headerGap: '26px', // Vault.dc.html:87 (header/filters/grid column gap)
 } as const;
 
 export type SourceKind = keyof typeof sourceTint;
