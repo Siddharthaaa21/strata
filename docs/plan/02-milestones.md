@@ -17,8 +17,8 @@ Make the loop trustworthy before anything depends on it.
 - [x] Context graph + integrity check wired into `npm run verify`
 - [x] `packages/tokens` — every handoff value transcribed, each with a citation
 - [x] `apps/web` Next.js app boots, renders tokens, no screens yet
-- [ ] Lint config (deliberately deferred from initial scaffold — nothing to lint yet)
-- [ ] CI running `npm run verify` on push
+- [x] Lint config (deliberately deferred from initial scaffold — nothing to lint yet)
+- [x] CI running `npm run verify` on push
 
 **Done when** `npm run verify` is green, meaningful, and runs on every push.
 
