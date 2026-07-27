@@ -1,0 +1,29 @@
+{
+  "name": "strata",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AI engineering workspace — searchable knowledge base for humans and agents",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @strata/web",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "node --test",
+    "graph": "node scripts/graph.mjs",
+    "verify": "npm run typecheck && npm run test && npm run graph -- --check"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "^8.5.23",
+    "sharp": "^0.35.3"
+  }
+}

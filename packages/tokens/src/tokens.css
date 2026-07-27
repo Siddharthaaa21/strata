@@ -1,0 +1,97 @@
+/* Design tokens from the Strata handoff. Mirrors packages/tokens/src/index.ts — keep in sync.
+   This file and index.ts are the ONLY places raw oklch() may appear (enforced by
+   .claude/hooks/post-edit.sh). */
+
+:root {
+  /* Surfaces */
+  --surface-page: oklch(96.5% 0.014 95);
+  --surface-sunken: oklch(94.5% 0.016 95);
+  --surface-raised: oklch(100% 0 0);
+  --surface-chip: oklch(95% 0.015 95);
+  --surface-code: oklch(95.5% 0.015 95);
+
+  /* Borders — four distinct jobs, not interchangeable */
+  --border-structural: oklch(88% 0.015 95);
+  --border-card: oklch(89% 0.015 95);
+  --border-hairline: oklch(91% 0.015 95);
+  --border-control: oklch(87% 0.015 95);
+
+  /* Ink */
+  --ink-base: oklch(20% 0.02 75);
+  --ink-title: oklch(22% 0.02 75);
+  --ink-body: oklch(24% 0.02 75);
+  --ink-strong: oklch(28% 0.02 75);
+  --ink-muted: oklch(48% 0.02 75);
+  --ink-subtle: oklch(52% 0.02 75);
+  --ink-faint: oklch(55% 0.02 75);
+  --ink-inverse: oklch(99% 0.005 90); /* warm off-white, not pure white */
+
+  /* Accent — overridable per instance; do not hardcode downstream */
+  --accent: oklch(55% 0.23 300);
+
+  /* Source tints */
+  --source-claude-fg: oklch(48% 0.14 40);
+  --source-claude-icon-fg: oklch(45% 0.12 40);
+  --source-claude-icon-bg: oklch(93% 0.05 40);
+  --source-cursor-fg: oklch(45% 0.12 260);
+  --source-cursor-icon-fg: oklch(42% 0.1 260);
+  --source-cursor-icon-bg: oklch(90% 0.04 260);
+  --source-markdown-fg: oklch(45% 0.1 145);
+  --source-markdown-icon-fg: oklch(38% 0.1 145);
+  --source-markdown-icon-bg: oklch(92% 0.05 145);
+  --source-github-fg: oklch(30% 0.01 70);
+  --source-github-icon-bg: oklch(90% 0.008 90);
+  --status-connected: oklch(45% 0.1 145);
+
+  /* Type */
+  --font-ui: 'Space Grotesk', system-ui, sans-serif;
+  --font-reading: 'Source Serif 4', serif;
+  --font-mono: ui-monospace, monospace;
+
+  --text-micro: 11px;
+  --text-label: 11.5px;
+  --text-small: 12px;
+  --text-meta: 12.5px;
+  --text-nav: 13px;
+  --text-nav-item: 13.5px;
+  --text-body: 14px;
+  --text-card-title: 17px;
+  --text-reader-heading: 20px;
+  --text-screen-title: 28px;
+  --text-reader-title: 34px;
+  --text-reader-body: 17.5px;
+  --leading-reader-body: 1.75;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-control: 7px;
+  --radius-md: 8px;
+  --radius-tile: 9px;
+  --radius-cta: 10px;
+  --radius-row: 12px;
+  --radius-card: 14px;
+  --radius-pill: 99px;
+
+  /* Layout */
+  --sidebar-width: 248px;
+  --reader-rail-width: 280px;
+  --reader-content-max: 660px;
+  --import-column-max: 840px;
+  --library-column-max: 1180px;
+  --main-padding: 40px 48px;
+  --library-grid: repeat(3, minmax(0, 1fr));
+  --library-gap: 20px;
+}
+
+/* The only breakpoint. README:33-38 — the prototype measures window.innerWidth in JS; the app
+   uses a media query, explicitly sanctioned at README:38. */
+@media (max-width: 859.98px) {
+  :root {
+    --main-padding: 20px 18px;
+    --library-grid: 1fr;
+    --text-reader-title: 26px;
+    /* Reader body GROWS on mobile — optimized for reading on a phone. Not a bug. */
+    --text-reader-body: 18.5px;
+    --leading-reader-body: 1.85;
+  }
+}

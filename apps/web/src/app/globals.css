@@ -1,0 +1,39 @@
+/* Global baseline. All values reference tokens from @strata/tokens — no raw color literals here
+   (enforced by .claude/hooks/post-edit.sh). */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-page);
+  font-family: var(--font-ui);
+  color: var(--ink-base);
+}
+
+h1,
+h2,
+h3,
+.serif {
+  font-family: var(--font-reading);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--surface-chip);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-structural);
+  border-radius: var(--radius-sm);
+}

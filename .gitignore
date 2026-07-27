@@ -1,0 +1,24 @@
+node_modules/
+.next/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+npm-debug.log*
+
+# Claude Code local overrides — machine-specific, never shared
+.claude/settings.local.json
+
+# Generated: rebuild with `npm run graph`
+context-graph/graph.json
+context-graph/graph.mmd
+
+# Next.js generated
+apps/web/next-env.d.ts
