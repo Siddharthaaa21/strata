@@ -15,8 +15,8 @@ Make the loop trustworthy before anything depends on it.
 - [x] Repo structure, workspaces, TypeScript config
 - [x] `.claude` setup: agents, skills, commands, workflows, hooks
 - [x] Context graph + integrity check wired into `npm run verify`
-- [ ] `packages/tokens` — every handoff value transcribed, each with a citation
-- [ ] `apps/web` Next.js app boots, renders tokens, no screens yet
+- [x] `packages/tokens` — every handoff value transcribed, each with a citation
+- [x] `apps/web` Next.js app boots, renders tokens, no screens yet
 - [ ] Lint config (deliberately deferred from initial scaffold — nothing to lint yet)
 - [ ] CI running `npm run verify` on push
 
@@ -38,8 +38,15 @@ they are closed.
 
 **Done when** `packages/core` is stable enough that a change to it would be a versioned event.
 
-**Do not start M2 or M3 implementation before this milestone closes.** Building screens against a
-`Doc` that has not settled means rebuilding them.
+**Scope of the M2/M3 hold (revised — see decision log D8):** `packages/core` already ships `Doc`,
+`Source`, `ImportEvent` with the tenancy field structurally deferred (not guessed — see the
+`TODO(risk-tenancy)` in `packages/core/src/index.ts`). That makes fixture-driven UI safe to build
+now: nothing in a fixtures module can leak a tenancy assumption a real query could. The hold that
+remains is **persistence and the MCP surface** — anything that writes a real `Doc` to storage or
+answers a scoped query must still wait for `risk-tenancy` to close, because retrofitting scope
+into a live schema and live tool signatures is the expensive version of this problem. M2/M3
+screens against `packages/*/fixtures` are unblocked; wiring them to `svc-storage` or `svc-mcp` is
+not.
 
 ---
 

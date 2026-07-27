@@ -91,3 +91,29 @@ scaffold because there was no source to lint and untested config is worse than n
 M0 checklist item.
 
 **Reversible?** Trivially — it is a gap, not a choice against linting.
+
+---
+
+### D8 — Reopens D4: fixture-driven M2/M3 screens unblocked ahead of `risk-tenancy` closing
+**2026-07-28** · planning · reopens D4
+
+D4 sequenced all screen work after contracts because `Doc` blocks on tenancy (R1) and building
+screens against a shape that later gains a field means rebuilding them. That reasoning holds for
+anything that touches a real query or a real stored `Doc`. It does not hold for fixture-driven UI:
+`packages/core` already resolves the ambiguity by omitting the tenancy field structurally rather
+than guessing it (see the `TODO(risk-tenancy)` comment in `packages/core/src/index.ts`), and a
+fixtures module has no query or storage layer for a tenancy field to be missing from. There is
+nothing about `screen-library`, `screen-reader`, or `screen-import` rendering from
+`packages/*/fixtures` that a later tenancy field would invalidate — the components consume `Doc`
+metadata that is stable either way.
+
+What stays blocked: `svc-storage`, `svc-mcp`, and anything that answers a scoped query against
+real data. Those still wait on R1 closing per D4/D5.
+
+Rejected: closing R1 first and delaying screens further — the tenancy ADR is a product decision
+(scope unit: user vs. team vs. workspace) with no engineering blocker forcing it now, and holding
+three well-specified, low-risk screens hostage to an unrelated product decision was costing more
+than it was buying.
+
+**Reversible?** Yes — screens built against fixtures don't need touching when R1 closes; only the
+data-fetching layer that replaces fixtures does.
