@@ -3,7 +3,10 @@
     "allow": [
       "Bash(git init *)",
       "Bash(git add *)",
-      "Bash(git -c user.email=dev@local -c user.name=dev commit -q -m \"Snapshot: original design handoff bundle\")"
+      "Bash(git -c user.email=dev@local -c user.name=dev commit -q -m \"Snapshot: original design handoff bundle\")",
+      "Bash(npm install *)",
+      "Bash(git -C /Users/siddhartha/Downloads/design_handoff_strata_workspace status context-graph/)",
+      "Bash(echo \"none=$?\")"
     ]
   }
 }
