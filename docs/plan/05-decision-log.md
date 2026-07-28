@@ -156,3 +156,50 @@ now, not on this risk.
 **Reversible?** Moderately. See ADR 0002's Migration risk section — a later change to the scope
 unit touches three tables' leading indexed column, but no MCP tool signature, screen, or the
 ingestion dedupe key, because none of those touch `workspaceId` directly.
+
+---
+
+### D10 — Reopens M5-after-M4 sequencing: local Markdown ingest logic unblocked ahead of `svc-storage`
+**2026-07-29** · planning · reopens the M4-then-M5 ordering in `02-milestones.md` · ADR: `docs/adr/0003-ingest-identity.md`
+
+Same shape of exception as D8: the milestone doc sequences M5 (ingestion) after M4 (storage), and
+`svc-ingest`'s "persist" stage genuinely cannot be built before `svc-storage` exists. That reasoning
+holds for persistence. It does not hold for the local Markdown adapter's fetch → normalize → dedupe
+→ `ImportEvent` logic, which `strata-architect` (routed for the identity/normalization design — see
+ADR 0003) scoped deliberately to stop one field short of a real `Doc`: it produces a `PendingDoc`
+(everything `Doc` has except `id`/`bodyRef`) and complete `ImportEvent` records, tested entirely
+against in-memory fixtures with an injected filesystem port — no live disk, no network, no
+`svc-storage` dependency of any kind.
+
+The architect flagged this sequencing question explicitly rather than silently building ahead
+(`OPEN` item 6 in its design), and asked the dispatching agent to confirm the exception and record
+it here, matching D8's precedent. Confirmed: build the storage-free portion now.
+
+Why this doesn't quietly reintroduce `risk-injection` (R2) into M5, which is still open and still
+blocks M6 only: the design commits to three invariants for the M5 scope — no `Derived<T>` value
+this adapter produces ever carries `provenance: 'model'` (no LLM call anywhere in the path);
+ingested text (frontmatter, body) never selects a code path, only a value; and ingested text never
+reaches `ImportEvent.error.message` (a caught parser error's own `.message` can itself embed
+source text — e.g. `js-yaml` — and must be discarded in favor of a fixed template keyed on error
+code, never interpolated raw). `context-graph/nodes/svc-ingest.md`'s `depends_on: [..., risk-injection]`
+edge stays — it means "read R2 before touching this code," not "blocked on R2," which is a real
+ambiguity in how this repo's graph edges are documented; see the one-line clarification added to
+`CLAUDE.md`'s Context graph section in this same change.
+
+One real gap this surfaced rather than closed: R2's mitigation list is written about ingested
+*content*; `search_docs` returns `title`/`excerpt`/`tags`, all derived from that same untrusted
+content under this design. "Fence the returned content as data" does not obviously cover a
+document titled as an instruction. Recorded as a sub-item under R2 in the risk register — for the
+eventual injection ADR to resolve, not this one.
+
+Rejected: waiting for M4 to close before starting any M5 work (the same cost D8 rejected — holding
+well-scoped, low-risk work hostage to an unrelated milestone's sequencing); resolving R2's
+metadata-channel gap as part of this design (out of scope — this is an ingest design, not the
+injection-fencing ADR).
+
+**Reversible?** Yes, with one real cost named up front, not hidden: `externalId` is the
+NFC-normalized relative file path, so a file rename is currently a delete-plus-create, not an
+update, and the old `DocId` (and anything attached to it later) is lost. That is a property of
+path-based identity, not an oversight, and is tracked as an open item in ADR 0003 rather than
+deferred silently. The storage-free scope itself needs no rework when `svc-storage` lands — only
+the `persist` stage (not yet built) plugs in underneath it.

@@ -82,7 +82,10 @@ waiting on `risk-tenancy` — they are waiting on milestone sequencing (M4/M6 ha
 
 ## M4 — Storage, search, and real data
 
-- [ ] `svc-storage` decision + implementation
+- [ ] `svc-storage` decision + implementation. Constraint from ADR 0003 (M5's ingest design,
+      built ahead of this milestone per D10): persist must upsert on
+      `(workspaceId, sourceId, externalId)` and treat the `DocId` ingestion mints as a proposal,
+      not an assertion — a crash mid-persist plus a retry must not double-write.
 - [ ] `svc-search` — ranking designed for the agent case first, UI filtering as its subset
 - [ ] Screens wired to real persistence; fixtures retired
 - [ ] `strata-verifier` pass on every query path
@@ -93,11 +96,20 @@ waiting on `risk-tenancy` — they are waiting on milestone sequencing (M4/M6 ha
 
 ## M5 — Ingestion
 
-- [ ] Local Markdown adapter first — no OAuth, exercises the whole pipeline end to end
-- [ ] Normalizer, dedupe, `ImportEvent` emission including failures
+**Sequencing note (D10):** M5 is listed after M4 because "persist" needs `svc-storage` to exist.
+The fetch/normalize/dedupe/`ImportEvent` portion of the local Markdown adapter does not — it's
+storage-free by construction (ADR 0003) — so that part is unblocked and in progress ahead of M4,
+the same shape of exception D8 made for fixture-driven screens ahead of `risk-tenancy`. What
+still waits on M4: actually persisting a normalized doc and retiring the in-memory `PriorIndex`
+stand-in for a real one.
+
+- [ ] Local Markdown adapter first — no OAuth, exercises the whole pipeline end to end. Design
+      done: `docs/adr/0003-ingest-identity.md`. Build in progress.
+- [ ] Normalizer, dedupe, `ImportEvent` emission including failures — designed in ADR 0003
 - [ ] Claude and Cursor adapters
 - [ ] GitHub adapter — ships **not connected** by default
-- [ ] Fixture-based tests per adapter; no live network in tests
+- [ ] Fixture-based tests per adapter; no live network in tests — ADR 0003 specifies an injected
+      filesystem port for exactly this
 
 **Done when** a real folder of Markdown ingests, dedupes on re-run, and appears in the Library.
 
