@@ -25,7 +25,10 @@ rel="${file#"$repo_root"/}"
 
 case "$rel" in
   *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.json|*.md|*.css|*.yml|*.yaml)
-    if LC_ALL=C grep -qP '\x00' "$file" 2>/dev/null; then
+    # Detection is done in node, not grep: BSD grep (macOS default) accepts -P but never
+    # matches \x00, so `grep -qP '\x00'` silently reports clean on a genuinely corrupt file.
+    # This hook already spawns node above, so this costs nothing and is portable.
+    if node -e 'process.exit(require("fs").readFileSync(process.argv[1]).includes(0) ? 0 : 1)' "$file" 2>/dev/null; then
       echo "Binary guard: $rel now contains a NUL byte." >&2
       echo "This usually means a concurrent writer touched this exact file mid-edit, or a" >&2
       echo "literal control character was typed instead of an escape (e.g. \\u0000)." >&2

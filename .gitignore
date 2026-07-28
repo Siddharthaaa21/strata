@@ -22,3 +22,6 @@ context-graph/graph.mmd
 
 # Next.js generated
 apps/web/next-env.d.ts
+
+# Agent worktrees — full checkouts created by isolation: 'worktree'. Each has its own .git.
+.claude/worktrees/

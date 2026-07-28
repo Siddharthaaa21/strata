@@ -21,6 +21,11 @@ export default tseslint.config(
       "context-graph/graph.json",
       "context-graph/graph.mmd",
       "design/handoff/**",
+      // Agent worktrees are full checkouts of this repo. Linting them lints duplicate copies of
+      // every source file, and the duplicates trip rules scoped by path (the Scope-cast
+      // no-restricted-syntax exemption below is keyed to packages/core/src/*, so the copies fail
+      // it). Each worktree runs its own gate against its own branch.
+      ".claude/worktrees/**",
     ],
   },
   js.configs.recommended,
