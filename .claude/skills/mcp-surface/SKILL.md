@@ -22,10 +22,18 @@ security surface, in that order.
 
    Concretely, per `docs/adr/0002-tenancy-workspace-scope.md`: every handler takes a `Scope` as an
    explicit argument (resolved from the caller's credential before dispatch, never read from
-   module state), and every domain object must pass `assertVisible`/`assertSourceVisible` before it
-   is allowed to reach a payload builder — redundant with the store-level `scopeFilter`, on
-   purpose. `search_docs(scope, { query, filters?, limit? })`, `get_doc(scope, { doc_id })`,
+   module state), and every domain object must pass a re-check before it is allowed to reach a
+   payload builder — redundant with the store-level `scopeFilter`, on purpose. Use the right shape
+   of check for the cardinality: a **single-object** lookup (`get_doc`) uses
+   `assertVisible`/`assertSourceVisible`, which throws `NotFound`; a **list** (`search_docs`,
+   `list_sources`) filters each row with `isVisible` and silently drops the ones that fail —
+   asserting per row would turn one out-of-grant result into a failed call for the whole list.
+   `search_docs(scope, { query, filters?, limit? })`, `get_doc(scope, { doc_id })`,
    `list_sources(scope)`. `scope` is never serialized into a tool's own request/response schema.
+
+   This is enforced by an ESLint rule, not by the type system alone — `Scope`/`Visible<T>` are
+   brands, and a bare cast compiles anywhere. See ADR 0002's Enforcement section before assuming
+   "it's typed as `Visible<Doc>`" is itself proof a check ran.
 4. **Descriptions are prompts.** A tool description is read by a model as instruction. Write it as
    a precise contract; never interpolate ingested content into one.
 5. **Errors are informative, not revealing.** "Not found" and "not permitted" must be

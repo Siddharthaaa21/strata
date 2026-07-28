@@ -5,7 +5,7 @@ title: MCP server
 status: planned
 owner: mcp
 spec: .claude/skills/mcp-surface/SKILL.md
-depends_on: [contract-doc, svc-search, dec-tenancy, risk-injection]
+depends_on: [contract-doc, contract-scope, svc-search, dec-tenancy, risk-injection]
 ---
 
 The product's differentiator and its largest security surface, in that order. Read-only to start:

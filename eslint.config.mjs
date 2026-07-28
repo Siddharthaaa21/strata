@@ -32,6 +32,31 @@ export default tseslint.config(
     },
   },
   {
+    // ADR 0002: Scope and Visible<T> are access-control witnesses, not plain brands. The only
+    // legitimate construction sites are mintScope (scope-internal.ts) and
+    // assertVisible/assertSourceVisible (index.ts) — everywhere else, a cast is a bypass of the
+    // scope check those functions perform. This is what makes "skipping the check is a type
+    // error" true rather than aspirational; without it, `as Scope` / `as Visible<T>` compiles
+    // anywhere with no import and no hook to catch it.
+    files: ["**/*.ts", "**/*.tsx"],
+    ignores: ["packages/core/src/index.ts", "packages/core/src/scope-internal.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "TSAsExpression[typeAnnotation.typeName.name='Scope']",
+          message:
+            "Do not cast to Scope. Take one as a parameter, minted upstream by mintScope (@strata/core/scope-internal, packages/auth only).",
+        },
+        {
+          selector: "TSAsExpression[typeAnnotation.typeName.name='Visible']",
+          message:
+            "Do not cast to Visible<T>. Obtain it from assertVisible/assertSourceVisible (@strata/core) — that call is the scope re-check.",
+        },
+      ],
+    },
+  },
+  {
     files: ["scripts/**/*.mjs"],
     languageOptions: { globals: globals.node },
   },

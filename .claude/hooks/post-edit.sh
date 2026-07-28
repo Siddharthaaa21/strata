@@ -34,14 +34,16 @@ case "$rel" in
 esac
 
 # --- Guardrail 1b: Scope may only be minted from packages/auth ------------------
-# ADR 0002: mintScope is the only way to construct a Scope. Importing the subpath
-# outside packages/auth defeats the "minted from one place" guarantee the same way an
-# exception to the oklch() rule above would.
+# ADR 0002: mintScope is the only way to construct a Scope. This is a fast, best-effort
+# tripwire on the import path only — it does NOT stop `{...} as Scope` (no import
+# needed for that; the real backstop is the no-restricted-syntax ESLint rule in
+# eslint.config.mjs, checked by `npm run verify`). Catches both the package-subpath
+# and relative-path forms of the import.
 case "$rel" in
-  packages/auth/*) ;;
+  packages/auth/*|packages/core/src/scope-internal.ts|*.test.ts|*.test.tsx) ;;
   *.ts|*.tsx|*.js|*.jsx)
-    if grep -nE "@strata/core/scope-internal" "$file" >/dev/null 2>&1; then
-      echo "Scope discipline: $rel imports @strata/core/scope-internal." >&2
+    if grep -nE "(@strata/core/scope-internal|['\"][./]*scope-internal['\"])" "$file" >/dev/null 2>&1; then
+      echo "Scope discipline: $rel imports scope-internal." >&2
       echo "mintScope is minted from packages/auth only (see docs/adr/0002-tenancy-workspace-scope.md)." >&2
       echo "Take a Scope as a parameter instead of minting one here." >&2
       exit 2

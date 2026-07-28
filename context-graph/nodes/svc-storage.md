@@ -5,7 +5,7 @@ title: Storage
 status: planned
 owner: core
 spec: docs/plan/04-risk-register.md
-depends_on: [contract-doc, dec-tenancy]
+depends_on: [contract-doc, dec-tenancy, contract-scope]
 ---
 
 Where docs live. Undecided. The choice is coupled to search: full-text ranking and vector

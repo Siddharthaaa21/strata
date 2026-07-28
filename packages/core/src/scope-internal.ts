@@ -16,7 +16,7 @@ import type { Grant, Principal, Scope } from './index';
  * principal's workspace. Never cache the result across requests — see `Scope`'s doc comment.
  */
 export function mintScope(principal: Principal, grant: Grant): Scope {
-  if (grant.revokedAt) {
+  if (grant.revokedAt !== undefined) {
     throw new Error('Grant revoked');
   }
   if (grant.principalId !== principal.id || grant.workspaceId !== principal.workspaceId) {

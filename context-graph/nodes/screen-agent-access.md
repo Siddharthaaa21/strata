@@ -5,7 +5,7 @@ title: Agent Access
 status: planned
 owner: web
 spec: docs/plan/02-milestones.md
-depends_on: [svc-mcp, contract-source, comp-sidebar, dec-tenancy]
+depends_on: [svc-mcp, contract-source, comp-sidebar, dec-tenancy, contract-scope]
 ---
 
 Not designed. The prototype's third nav item is labelled "Agent Access" but routes to the reader —

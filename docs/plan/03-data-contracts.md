@@ -30,14 +30,18 @@ interface Grant {
 }
 
 /** Proof a caller was authenticated. Minted once per request by `mintScope` — see below. Never cached. */
-interface Scope { principal: Principal; workspaceId: WorkspaceId; grant: Grant; /* + unforgeable brand */ }
+interface Scope { principal: Principal; workspaceId: WorkspaceId; grant: Grant; /* + a brand, not a forgery-proof tag — see below */ }
 ```
 
-`Scope` can only be constructed by `mintScope` in `packages/core/src/scope-internal.ts`, imported
-under the `@strata/core/scope-internal` subpath. The `post-edit` hook bans that import outside
-`packages/auth`, mirroring the `oklch()` restriction (D3) — the goal is not to defeat a determined
-caller, it is to make "forgot to check" impossible and "bypassed the check" one grep-able call
-site.
+`Scope` is meant to be constructed only by `mintScope` in `packages/core/src/scope-internal.ts` —
+but it is a TypeScript brand, the same mechanism as `DocId`, and a bare `as Scope` cast compiles
+anywhere with no import to catch. What actually enforces "only `mintScope` constructs a `Scope`" is
+a `no-restricted-syntax` ESLint rule in `eslint.config.mjs` that bans casting to `Scope` or
+`Visible<T>` outside `scope-internal.ts` and `index.ts` (where `assertVisible`/`assertSourceVisible`
+live), checked on every `npm run verify`. The `post-edit` hook additionally flags an import of
+`@strata/core/scope-internal` outside `packages/auth` — useful, but it is an advisory guard on one
+particular import path, not the actual enforcement mechanism; do not rely on it alone (see ADR 0002
+for the full correction — an earlier draft of this file overclaimed it).
 
 Every store read takes a `Scope` with no overload that omits it, and every value that reaches an
 MCP payload must first pass `assertVisible`/`assertSourceVisible` (throws one `NotFound` — never a
@@ -68,7 +72,7 @@ interface Doc {
 
   // Retrieval — what an agent sees before deciding to read the body
   title: string;
-  excerpt: string;             // derived; see Derived<T>
+  excerpt: Derived<string>;
   folder: Derived<string>;
   tags: Derived<string[]>;
   updatedAt: string;           // ISO-8601 UTC. Relative time is a render concern, never stored.

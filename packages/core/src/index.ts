@@ -54,7 +54,12 @@ export interface Grant {
   readonly id: GrantId;
   readonly workspaceId: WorkspaceId;
   readonly principalId: PrincipalId;
-  /** Absent = every Source in the workspace. Present = only these. Set by ingestion config only. */
+  /**
+   * Absent = every Source in the workspace. Present (including `[]`, which means deny-all — not
+   * "everything") = only these. Set only when a Grant is issued, e.g. the M7 Agent Access flow —
+   * never derived from ingested or model-provenance content. That's the property this narrowing
+   * dimension has and `folder`/`tags` do not.
+   */
   readonly sourceIds?: readonly SourceId[];
   /** ISO-8601 UTC. */
   readonly createdAt: string;
@@ -65,12 +70,20 @@ export interface Grant {
 declare const scopeWitness: unique symbol;
 
 /**
- * Proof that a caller was authenticated and their grant resolved. Cannot be constructed by an
- * object literal outside `scope-internal.ts` — same mechanism as `Brand`.
+ * Proof that a caller was authenticated and their grant resolved.
+ *
+ * Unlike `Brand` (a compile-time-only tag with no runtime meaning), this is a witness of *work
+ * done* — a real scope check ran. That means the type system alone cannot stop `{ ... } as Scope`
+ * the way it stops passing a plain `string` where a `DocId` is expected: an `as` cast compiles
+ * anywhere. The actual enforcement is a `no-restricted-syntax` ESLint rule (part of `npm run
+ * verify`) that bans casting to `Scope` or `Visible<T>` outside this file and `scope-internal.ts`
+ * — those two are the only legitimate construction sites (`mintScope`, `assertVisible`,
+ * `assertSourceVisible`). Treat that rule as load-bearing, not decorative.
  *
  * Mint per request, from `mintScope` in `./scope-internal` only. Never cache across requests or
  * hold on a long-lived server object: a cached `Scope` is a `Grant` revocation that silently does
- * not take effect.
+ * not take effect. (`mintScope` checks `revokedAt` only at mint time — there is no expiry on
+ * `Scope` itself yet; see ADR 0002 OPEN item 4.)
  */
 export interface Scope {
   readonly [scopeWitness]: true;
@@ -110,7 +123,13 @@ export function assertVisible(scope: Scope, doc: Doc): Visible<Doc> {
   return doc as Visible<Doc>;
 }
 
-/** Same contract as `assertVisible`, for `Source` rows returned by `list_sources`. */
+/**
+ * Same contract as `assertVisible`, for a single `Source` lookup.
+ *
+ * Do not use this to build `list_sources`: asserting per row turns one out-of-grant source into a
+ * `NotFound` for the whole call. A list should filter with `isVisible` instead and silently drop
+ * rows that fail it — see `.claude/skills/mcp-surface/SKILL.md`.
+ */
 export function assertSourceVisible(scope: Scope, source: Source): Visible<Source> {
   if (source.workspaceId !== scope.workspaceId || !inGrant(scope, source.id)) {
     throw new Error('NotFound');
@@ -143,7 +162,8 @@ export interface Source {
   /**
    * Tenancy. `Source` is returned by `list_sources` independently of any `Doc`; without this
    * field that tool either joins through docs or leaks every connected account workspace-wide.
-   * Never returned to an MCP caller. See ADR 0002.
+   * Excluded from every MCP payload — see the next field's comment for what "excluded" means in
+   * practice. See ADR 0002.
    */
   readonly workspaceId: WorkspaceId;
   readonly kind: SourceKind;
@@ -153,8 +173,15 @@ export interface Source {
   /** ISO-8601 UTC. */
   readonly lastSyncAt?: string;
   /**
-   * A reference to a credential, never the credential. A Source is serialized to the browser AND
-   * returned by the MCP `list_sources` tool — anything on it is effectively public to both.
+   * A reference to a credential, never the credential.
+   *
+   * The full `Source` (this field included) is serialized to the browser as-is — that's fine,
+   * `credentialRef` is a reference, not a secret. The MCP surface is different: `list_sources`
+   * does not return `Source` directly, it returns a hand-written `SourcePayload` allow-list
+   * (`.claude/skills/mcp-surface/SKILL.md` rule 6) that omits `workspaceId` by construction. This
+   * field is not currently on that exclusion list; keep it that way only if a future MCP client
+   * genuinely needs it; default to leaving it off too since "effectively public" is exactly the
+   * property `Grant` narrowing is supposed to prevent.
    */
   readonly credentialRef?: string;
 }

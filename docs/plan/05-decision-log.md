@@ -130,11 +130,15 @@ existed rules out user scope outright, and "not an enterprise wiki" rules out a 
 An agent is a distinct principal from the user who connected it (per M7), so per-agent scope is a
 `Grant` that narrows within a workspace, not a second field on `Doc`.
 
-Enforcement is compiler-backed: `Scope` can only be constructed by `mintScope` in
-`packages/core/src/scope-internal.ts`, imported under `@strata/core/scope-internal` — a `post-edit`
-hook bans that import outside `packages/auth`, mirroring the `oklch()` restriction (D3). Every
-value reaching an MCP payload must pass `assertVisible`/`assertSourceVisible` first, redundantly
-with the store-level filter, per M6's "scope re-checked inside every tool" requirement.
+Enforcement leans on the type system but is not purely compiler-backed: `Scope`/`Visible<T>` are
+brands, and a bare `as Scope` cast compiles with no import for a `post-edit` hook to catch — a
+`strata-verifier` pass caught this after the fact and compiled a working bypass. The real backstop
+added in the same fix: a `no-restricted-syntax` ESLint rule (`eslint.config.mjs`) that bans casting
+to `Scope`/`Visible<T>` outside `mintScope` (`packages/core/src/scope-internal.ts`) and
+`assertVisible`/`assertSourceVisible` (`packages/core/src/index.ts`), checked on every `npm run
+verify`. Every value reaching an MCP payload must pass `assertVisible`/`assertSourceVisible` first,
+redundantly with the store-level filter, per M6's "scope re-checked inside every tool" requirement
+— see ADR 0002 for the full correction.
 
 Rejected: per-doc ACLs (pushes permission decisions into ingestion, and per-doc sharing is
 explicitly deferred); narrowing agent grants by `folder`/`tags` (both are `Derived<T>` and can

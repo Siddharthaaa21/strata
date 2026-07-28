@@ -30,11 +30,23 @@ That field is never a tool parameter and never appears in an MCP response payloa
 (where data lives) and capability (what a caller may reach) are modeled as two separate things, on
 purpose, because conflating them is what makes tenancy expensive to retrofit later.
 
-Enforcement is compiler-backed, not conventional: a `Scope` value must exist to read from a store
-at all (minted once per request, from a single module `packages/core/src/scope-internal.ts`, never
-cached across requests), and a second, redundant check — `assertVisible` — must be run before any
-domain object may be projected into an MCP payload. Skipping either is a type error, not a review
-finding.
+Enforcement leans on the type system but is not purely compiler-backed, and this ADR originally
+overstated that — corrected here after a `strata-verifier` pass compiled a working bypass. `Scope`
+and `Visible<T>` are TypeScript brands: like `DocId`/`SourceId`, a bare `as Scope` or
+`as Visible<Doc>` cast compiles anywhere, with no import and nothing for the `post-edit` hook to
+catch, because it needs no reference to `scope-internal.ts`. A `Scope` value is *intended* to exist
+before any store read (minted once per request from `mintScope` in
+`packages/core/src/scope-internal.ts`, never cached across requests) and a domain object is
+*intended* to pass `assertVisible`/`assertSourceVisible` before reaching an MCP payload — but the
+type system cannot force either by itself.
+
+What actually closes the gap: a `no-restricted-syntax` ESLint rule (`eslint.config.mjs`, part of
+`npm run verify`) that bans casting to `Scope` or `Visible<T>` anywhere except
+`packages/core/src/index.ts` and `scope-internal.ts` — the only two files that legitimately
+construct either (`mintScope`, `assertVisible`, `assertSourceVisible`). That rule is what makes
+"skip the check and the codebase won't compile" true. It is a lint rule, not the compiler itself,
+so it inherits lint's limits (disableable per-line, doesn't cover dynamically-generated code) —
+weaker than the original claim, but real and checked on every `npm run verify`.
 
 ## Rationale
 
@@ -72,6 +84,9 @@ finding.
 - `packages/core` gains `Workspace`, `Membership`, `Principal`, `Grant`, `Scope`, `Visible<T>`, and
   the `workspaceId` field on `Doc`, `Source`, and `ImportEvent`. See
   `packages/core/src/index.ts`.
+- `eslint.config.mjs` gains a `no-restricted-syntax` rule enforcing the smart-constructor pattern
+  above. Anything that adds a legitimate third construction site for `Scope`/`Visible<T>` must
+  extend that rule's file exemption in the same change, not work around it.
 - **Migration risk: medium, asymmetric.** If the scope unit changes later, three tables gain/change
   one leading, non-nullable, indexed column — a backfill and index rebuild once real data exists,
   bounded but not free. No MCP tool signature, screen, or the ingestion dedupe key changes, because
