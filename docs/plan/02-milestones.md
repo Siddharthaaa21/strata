@@ -29,24 +29,25 @@ Make the loop trustworthy before anything depends on it.
 The two open risks below determine the `Doc` shape. Everything downstream is speculative until
 they are closed.
 
-- [ ] **Resolve `risk-tenancy`** — user / team / workspace scoping. Route to `strata-architect`.
-      Consider running `design-panel.js`; this is exactly the decision it exists for.
+- [x] **Resolve `risk-tenancy`** — user / team / workspace scoping. Routed to `strata-architect`;
+      closed by `docs/adr/0002-tenancy-workspace-scope.md` (decision log D9). Workspace-scoped,
+      residency separated from capability.
 - [ ] **Resolve `risk-injection`** — the fencing strategy for ingested content served over MCP.
-- [ ] `packages/core` — `Doc`, `Source`, `ImportEvent` committed, with provenance tracking
-- [ ] ADR for each of the above
-- [ ] Context-graph nodes moved to `done`, `--impact` verified accurate
+- [x] `packages/core` — `Doc`, `Source`, `ImportEvent` committed, with provenance tracking and
+      `workspaceId` per ADR 0002
+- [x] ADR for `risk-tenancy` (0002) — `risk-injection` still needs its own ADR when it closes
+- [x] Context-graph nodes for the tenancy contracts moved to `done`; `--impact dec-tenancy`
+      verified accurate (13 downstream nodes, all expected: screens/components consuming `Doc`,
+      plus `svc-storage`/`svc-mcp`/`svc-search`/`svc-ingest`)
 
 **Done when** `packages/core` is stable enough that a change to it would be a versioned event.
 
-**Scope of the M2/M3 hold (revised — see decision log D8):** `packages/core` already ships `Doc`,
-`Source`, `ImportEvent` with the tenancy field structurally deferred (not guessed — see the
-`TODO(risk-tenancy)` in `packages/core/src/index.ts`). That makes fixture-driven UI safe to build
-now: nothing in a fixtures module can leak a tenancy assumption a real query could. The hold that
-remains is **persistence and the MCP surface** — anything that writes a real `Doc` to storage or
-answers a scoped query must still wait for `risk-tenancy` to close, because retrofitting scope
-into a live schema and live tool signatures is the expensive version of this problem. M2/M3
-screens against `packages/*/fixtures` are unblocked; wiring them to `svc-storage` or `svc-mcp` is
-not.
+**Scope of the M2/M3 hold (revised twice — D8, then D9 closing `risk-tenancy`):** `packages/core`
+now carries `workspaceId` on `Doc`, `Source`, and `ImportEvent` for real, not deferred. D8's
+distinction (fixture-driven UI was already safe; persistence and the MCP surface were the hold)
+still applies, but the reason for the hold has changed: `svc-storage` and `svc-mcp` are no longer
+waiting on `risk-tenancy` — they are waiting on milestone sequencing (M4/M6 have not started).
+`risk-injection` remains a separate, still-open block on M6 specifically; it does not block M4.
 
 ---
 

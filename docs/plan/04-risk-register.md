@@ -7,19 +7,24 @@ Update this when a risk closes; do not delete the entry, record the resolution a
 
 ---
 
-## R1 — Tenancy and access scoping undecided · **BLOCKING M1**
+## R1 — Tenancy and access scoping undecided · **RESOLVED**
 
 `risk-tenancy`
 
-Is a `Doc` scoped to a user, a team, or a workspace? Not decided anywhere in the handoff. The
+Was a `Doc` scoped to a user, a team, or a workspace? Not decided anywhere in the handoff. The
 sidebar shows one user and "4 agents connected", which implies accounts and per-agent scope
 without specifying either.
 
-**Why it is first.** It appears in the `Doc` shape, every query, every MCP tool signature, and the
+**Why it was first.** It appears in the `Doc` shape, every query, every MCP tool signature, and the
 storage schema. Retrofitting means touching all four at once, in a system that by then has real
 data in it. There is no cheap version of this decision made late.
 
-**Closes when** an ADR names the scope unit and `packages/core` carries the field.
+**Closed.** `docs/adr/0002-tenancy-workspace-scope.md` — workspace-scoped, with residency
+(`workspaceId` on `Doc`/`Source`/`ImportEvent`) modeled separately from capability (`Grant`,
+`Scope`). `packages/core` carries the field. See decision log D9.
+
+Unblocks the `svc-storage` and `svc-mcp` holds D8 left standing — those may now proceed once
+sequenced (M4/M6); they were waiting on this, not on milestone order.
 
 ---
 

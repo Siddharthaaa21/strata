@@ -117,3 +117,38 @@ than it was buying.
 
 **Reversible?** Yes — screens built against fixtures don't need touching when R1 closes; only the
 data-fetching layer that replaces fixtures does.
+
+---
+
+### D9 — Closes R1: `Doc` is workspace-scoped
+**2026-07-28** · architecture · ADR: `docs/adr/0002-tenancy-workspace-scope.md` · closes `risk-tenancy`
+
+Routed to `strata-architect`. A `Doc` is scoped to a workspace — flat, non-hierarchical. Residency
+(`workspaceId` on `Doc`/`Source`/`ImportEvent`) is modeled separately from capability (`Grant`,
+carried by the caller): the north-star requirement that a teammate can find a doc they never knew
+existed rules out user scope outright, and "not an enterprise wiki" rules out a team/org hierarchy.
+An agent is a distinct principal from the user who connected it (per M7), so per-agent scope is a
+`Grant` that narrows within a workspace, not a second field on `Doc`.
+
+Enforcement is compiler-backed: `Scope` can only be constructed by `mintScope` in
+`packages/core/src/scope-internal.ts`, imported under `@strata/core/scope-internal` — a `post-edit`
+hook bans that import outside `packages/auth`, mirroring the `oklch()` restriction (D3). Every
+value reaching an MCP payload must pass `assertVisible`/`assertSourceVisible` first, redundantly
+with the store-level filter, per M6's "scope re-checked inside every tool" requirement.
+
+Rejected: per-doc ACLs (pushes permission decisions into ingestion, and per-doc sharing is
+explicitly deferred); narrowing agent grants by `folder`/`tags` (both are `Derived<T>` and can
+carry `model` provenance — an injection vector into access control, R2); `workspace_id` as an
+explicit MCP tool argument (welds a published tool signature to a revisable decision).
+
+Left open, routed rather than guessed: whether a user can belong to more than one workspace (folds
+into R7); that R7 now needs machine credentials distinct from user sessions; whether per-source
+`Grant` narrowing is enough for M7's Agent Access screen; `Scope` lifetime vs. per-request lookup
+cost (revisit with R6/`svc-storage`).
+
+Unblocks the `svc-storage`/`svc-mcp` holds D8 left standing — those wait on milestone sequencing
+now, not on this risk.
+
+**Reversible?** Moderately. See ADR 0002's Migration risk section — a later change to the scope
+unit touches three tables' leading indexed column, but no MCP tool signature, screen, or the
+ingestion dedupe key, because none of those touch `workspaceId` directly.

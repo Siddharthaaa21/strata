@@ -1,12 +1,53 @@
 # Data contracts
 
-Status: **proposed, not committed.** These shapes are blocked on `risk-tenancy` (see
-`04-risk-register.md`). They are written down so that work can be discussed against something
-concrete — not so it can be built on. The `?????` markers are real unknowns, not placeholders to
-fill in with a plausible guess.
+Status: **committed.** `risk-tenancy` closed via `docs/adr/0002-tenancy-workspace-scope.md` — a
+`Doc` is scoped to a workspace. Shapes below are current with `packages/core/src/index.ts`; that
+file is the source of truth if the two ever drift.
 
-Committed shapes live in `packages/core/src/index.ts`. Until M1 closes, that file exports these as
-`@experimental`.
+## Scope
+
+Residency (where data lives) and capability (what a caller may reach) are modeled separately —
+conflating them is what makes tenancy expensive to retrofit. See ADR 0002 for the full rationale.
+
+```ts
+type WorkspaceId = string & { readonly __brand: "WorkspaceId" };
+type PrincipalId = string & { readonly __brand: "PrincipalId" };
+
+interface Workspace { id: WorkspaceId; name: string; createdAt: string; }        // flat, never nested
+interface Membership { userId: PrincipalId; workspaceId: WorkspaceId; joinedAt: string; }
+
+/** An agent is a first-class principal, not a proxy for the user who connected it. */
+interface Principal { id: PrincipalId; kind: "user" | "agent"; workspaceId: WorkspaceId; }
+
+/** What one credential may reach. Narrows only — never widens, never crosses a workspace. */
+interface Grant {
+  id: GrantId;
+  workspaceId: WorkspaceId;
+  principalId: PrincipalId;
+  sourceIds?: SourceId[];   // absent = every Source in the workspace. The ONLY narrowing dimension.
+  createdAt: string;
+  revokedAt?: string;
+}
+
+/** Proof a caller was authenticated. Minted once per request by `mintScope` — see below. Never cached. */
+interface Scope { principal: Principal; workspaceId: WorkspaceId; grant: Grant; /* + unforgeable brand */ }
+```
+
+`Scope` can only be constructed by `mintScope` in `packages/core/src/scope-internal.ts`, imported
+under the `@strata/core/scope-internal` subpath. The `post-edit` hook bans that import outside
+`packages/auth`, mirroring the `oklch()` restriction (D3) — the goal is not to defeat a determined
+caller, it is to make "forgot to check" impossible and "bypassed the check" one grep-able call
+site.
+
+Every store read takes a `Scope` with no overload that omits it, and every value that reaches an
+MCP payload must first pass `assertVisible`/`assertSourceVisible` (throws one `NotFound` — never a
+distinguishable "forbidden", or the error channel becomes an enumeration oracle over doc ids). The
+two checks are intentionally redundant — see `02-milestones.md`'s M6 requirement that scope is
+re-checked inside every tool, not in middleware.
+
+`sourceIds` is the only permitted narrowing dimension on a `Grant`. `folder` and `tags` on `Doc`
+are `Derived<T>` and can carry `model` provenance — narrowing access by either would let a re-sync
+driven by ingested content move a doc into or out of an agent's view (R2).
 
 ## Doc
 
@@ -15,8 +56,9 @@ type DocId = string & { readonly __brand: "DocId" };   // Strata's id, opaque, n
 
 interface Doc {
   id: DocId;
-  // ?????  tenancy — one of: ownerId | teamId | workspaceId. Blocks on risk-tenancy.
-  //        This is the field that makes retrofitting expensive; do not guess it.
+  workspaceId: WorkspaceId;   // the only access-control input on this shape. Immutable — moving a
+                              // Doc between workspaces is a re-import, not an update. Never
+                              // returned to an MCP caller.
 
   // Provenance — where this came from
   sourceId: SourceId;
@@ -76,6 +118,9 @@ type SourceId = string & { readonly __brand: "SourceId" };
 
 interface Source {
   id: SourceId;
+  workspaceId: WorkspaceId;   // independent of Doc — list_sources returns Source directly, and
+                              // without this it either joins through docs or leaks every
+                              // connected account workspace-wide. Never returned to an MCP caller.
   kind: "claude" | "cursor" | "github" | "markdown";
   name: string;
   description: string;
@@ -97,6 +142,7 @@ GitHub defaults to `disconnected`. Product decision, recorded in `05-decision-lo
 ```ts
 interface ImportEvent {
   id: string;
+  workspaceId: WorkspaceId;    // lets the Import screen query without a join, human-only today
   sourceId: SourceId;
   docId?: DocId;               // absent when the import failed before a Doc existed
   status: "imported" | "updated" | "skipped-duplicate" | "failed";
@@ -122,10 +168,21 @@ partial-sync bugs undetectable.
 5. No `any` crosses a package boundary. Parse untrusted input at the edge; pass typed values inward.
 6. Changing a shape here: run `npm run graph -- --impact contract-doc`, route to
    `strata-architect`, update every consumer **including MCP tool schemas** in the same change.
+7. Every top-level persisted entity carries `workspaceId` as its first non-id field. A table
+   without one is a bug findable by grep.
+8. `workspaceId` is never an MCP tool argument and never appears in an MCP response payload.
+   Payload types in `apps/mcp` are hand-written allow-lists, never a spread of the domain type.
 
 ## Open
 
-- **Tenancy field.** Blocks everything. `risk-tenancy`.
+- **Multi-workspace membership.** `Membership` allows a user to belong to more than one workspace;
+  the handoff has no switcher UI for choosing the active one. Product decision — folds into R7.
+- **Machine credentials.** R7 (auth provider) now carries a hard requirement: long-lived,
+  individually revocable agent credentials distinct from user sessions.
+- **Grant narrowing granularity for M7.** Whether per-source is sufficient for the Agent Access
+  screen, or a doc-id allow-list is needed. Defer to the M7 design pass.
+- **`Scope` lifetime vs. lookup cost.** Per-request minting is correct but costs a grant lookup per
+  MCP call. Revisit with `svc-storage` (R6).
 - **Ranking inputs.** Does `Doc` need denormalized signals for search, or does the index own that?
   Blocks on `svc-search`.
 - **Versioning.** When a source re-syncs changed content: new `Doc`, or a revision on the existing
