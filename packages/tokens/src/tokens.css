@@ -67,6 +67,11 @@
   --text-brand: 15px; /* sidebar/top-bar wordmark — Vault.dc.html:31,44 */
   --leading-card-title: 1.35; /* Vault.dc.html:104 */
   --leading-card-excerpt: 1.5; /* Vault.dc.html:105 */
+  --letter-spacing-tight: -0.01em; /* Vault.dc.html:31,44,89 */
+
+  /* Motion */
+  --motion-card-hover: translateY(-2px); /* no shadow change — Vault.dc.html:101 */
+  --motion-card-transition: transform 0.15s;
 
   /* Radii */
   --radius-sm: 6px;
@@ -106,6 +111,7 @@
   --space-filter-row-gap: 8px; /* Vault.dc.html:93 */
   --space-filter-pill-padding: 7px 15px; /* Vault.dc.html:95 */
   --space-header-gap: 26px; /* Vault.dc.html:87 */
+  --space-subtitle-gap: 4px; /* Vault.dc.html:90 */
 }
 
 /* The only breakpoint. README:33-38 — the prototype measures window.innerWidth in JS; the app

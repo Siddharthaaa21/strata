@@ -2,7 +2,7 @@
 id: comp-doc-card
 kind: component
 title: Doc card
-status: planned
+status: done
 owner: web
 spec: design/handoff/README.md:17
 depends_on: [contract-doc, tokens-color, tokens-type, dec-stack]

@@ -1,0 +1,153 @@
+/* comp-sidebar — design/handoff/README.md:33, Vault.dc.html:27-82 (nav + brand + mobile chrome only;
+   search field, folders list, and user-profile footer are out of scope for this pass — see the
+   strata-ui-builder DEVIATIONS note). */
+
+.topBar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-top-bar-padding);
+  border-bottom: 1px solid var(--border-structural);
+  background: var(--surface-sunken);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-brand-gap);
+}
+
+.logoTile {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--ink-inverse);
+  font-weight: 700;
+}
+
+.topBar .logoTile {
+  width: var(--size-logo-tile-mobile);
+  height: var(--size-logo-tile-mobile);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-small);
+}
+
+.sidebar .logoTile {
+  width: var(--size-logo-tile-desktop);
+  height: var(--size-logo-tile-desktop);
+  border-radius: var(--radius-control);
+  font-size: var(--text-nav);
+}
+
+.productName {
+  font-weight: 700;
+  font-size: var(--text-brand);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.hamburger,
+.closeButton {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
+  color: inherit;
+}
+
+.hamburger {
+  width: var(--size-hamburger-tile);
+  height: var(--size-hamburger-tile);
+  font-size: var(--text-brand);
+}
+
+.closeButton {
+  display: none;
+  width: var(--size-close-tile);
+  height: var(--size-close-tile);
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  flex: none;
+  border-right: 1px solid var(--border-structural);
+  background: var(--surface-sunken);
+  padding: var(--space-sidebar-padding);
+  gap: var(--space-sidebar-section-gap);
+}
+
+.sidebarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.navList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-nav-list-gap);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-nav-item-gap);
+  padding: var(--space-nav-item-padding);
+  border-radius: var(--radius-control);
+  font-size: var(--text-nav-item);
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--ink-nav-inactive);
+  background: transparent;
+}
+
+.navItemActive {
+  color: var(--ink-body);
+  background: var(--surface-raised);
+}
+
+.navDot {
+  width: var(--size-nav-dot);
+  height: var(--size-nav-dot);
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-nav-icon-inactive);
+}
+
+.navDotActive {
+  background: var(--accent);
+}
+
+/* The only breakpoint — README:33-38. Mobile: sidebar becomes a full-screen overlay behind the
+   hamburger; the top bar takes the rail's place. Open/close is JS state, not the breakpoint. */
+@media (max-width: 859.98px) {
+  .topBar {
+    display: flex;
+  }
+
+  .closeButton {
+    display: flex;
+  }
+
+  .sidebar {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    width: 100%;
+  }
+
+  .sidebarOpen {
+    display: flex;
+  }
+}

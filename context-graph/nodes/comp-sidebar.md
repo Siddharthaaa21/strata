@@ -2,7 +2,7 @@
 id: comp-sidebar
 kind: component
 title: Sidebar / nav shell
-status: planned
+status: done
 owner: web
 spec: design/handoff/README.md:33
 depends_on: [tokens-color, tokens-type, dec-stack]

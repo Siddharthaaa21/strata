@@ -144,6 +144,11 @@ export const motion = {
   cardTransition: 'transform .15s',
 } as const;
 
+/** Vault.dc.html:31,44 (brand wordmark), :89 (library screen title). Never round or eyeball. */
+export const letterSpacing = {
+  tight: '-0.01em',
+} as const;
+
 /**
  * Padding/gap values that recur across the sidebar, top bar, doc card, and library screen.
  * Each cites the handoff line it came from — see packages/tokens/src/index.ts header comment.
@@ -161,6 +166,7 @@ export const spacing = {
   filterRowGap: '8px', // Vault.dc.html:93
   filterPillPadding: '7px 15px', // Vault.dc.html:95
   headerGap: '26px', // Vault.dc.html:87 (header/filters/grid column gap)
+  subtitleGap: '4px', // Vault.dc.html:90 (screen title to subtitle)
 } as const;
 
 export type SourceKind = keyof typeof sourceTint;

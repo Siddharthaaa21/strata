@@ -53,10 +53,18 @@ waiting on `risk-tenancy` — they are waiting on milestone sequencing (M4/M6 ha
 
 ## M2 — Shell and Library
 
-- [ ] `comp-sidebar` — desktop rail + mobile overlay, one 860px breakpoint via media query
-- [ ] `comp-doc-card`
-- [ ] `screen-library` against a fixtures module (no backend yet)
-- [ ] `/fidelity-check` clean on both components
+- [x] `comp-sidebar` — desktop rail + mobile overlay, one 860px breakpoint via media query.
+      Search field, folders list, and user-profile footer deliberately out of scope for this
+      pass (not backed by a `packages/core` type yet) — see `Sidebar.tsx`'s DEVIATIONS note.
+- [x] `comp-doc-card`
+- [x] `screen-library` against a fixtures module (no backend yet)
+- [x] `/fidelity-check` clean on both components — ran via `strata-fidelity-auditor`; found and
+      fixed four raw-literal token-discipline violations (`--motion-card-hover`,
+      `--motion-card-transition`, `--letter-spacing-tight`, `--space-subtitle-gap` were missing
+      from `packages/tokens`, so four values fell back to hardcoded CSS literals). Two handoff-
+      internal disagreements noted, not bugs: doc-card border (README 88% vs HTML 89%, HTML wins
+      per R10) and active-pill/nav text (README says "white", HTML uses off-white
+      `oklch(99% 0.005 90)`) — code correctly follows the HTML in both cases.
 
 **Done when** the Library renders from fixtures and the fidelity audit finds nothing.
 
