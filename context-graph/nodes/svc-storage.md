@@ -2,16 +2,16 @@
 id: svc-storage
 kind: service
 title: Storage
-status: planned
+status: in-progress
 owner: core
-spec: docs/plan/04-risk-register.md
+spec: docs/adr/0004-storage-and-search.md
 depends_on: [contract-doc, dec-tenancy, contract-scope, dec-storage-search]
 ---
 
-Where docs live. Undecided. The choice is coupled to search: full-text ranking and vector
-similarity have very different storage implications, and picking storage first without deciding
-retrieval is how you end up with a second system six weeks later.
+PostgreSQL, decided with search in one pass (dec-storage-search). Implemented in packages/storage:
+schema, scope-filtered ranked query, and an upsert that honors ADR 0003's provisional-id rule — on
+conflict the stored id wins, so a retry after a mid-persist crash converges instead of double-writing.
 
-Tenancy (`dec-tenancy`) is resolved, so this is no longer blocked by an open scope decision — every
-store read still must take a `Scope` and apply `scopeFilter` (ADR 0002); that is now an
-implementation requirement, not an open unknown.
+Tested against real Postgres 18 via PGlite (WASM, in-process) — the SQL under test is the SQL that
+ships. Still open: connecting a live server (no Postgres in the dev environment yet) and retiring
+the fixtures the screens currently read from.

@@ -9,7 +9,7 @@
  * `./index`), so it is produced by a cast here rather than an object literal with a computed key —
  * there is no separate runtime tag to smuggle out.
  */
-import type { Grant, Principal, Scope } from './index';
+import type { Grant, Principal, Scope } from './index.ts';
 
 /**
  * Mints a `Scope` for one request. Throws if the grant is revoked or does not match the

@@ -102,7 +102,13 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
       not an assertion — a crash mid-persist plus a retry must not double-write.
 - [x] `svc-search` — **designed** (ADR 0004 / D11): ranking weighted for the agent case,
       provenance-weighted tags, recency as tiebreaker only. Implementation still open below.
-- [ ] Implement the schema, upsert, and ranked query from ADR 0004
+- [x] Implement the schema, upsert, and ranked query from ADR 0004 — `packages/storage`, 13 tests
+      against real Postgres 18 (PGlite, in-process). Covers: existing-id-wins on re-import, no
+      cross-workspace leak, Grant `sourceIds` narrowing (and empty-array = deny-all), authored tags
+      outranking model tags, no body in search results, limit clamped, and `NotFound` being
+      indistinguishable between out-of-scope and nonexistent.
+- [ ] Connect a live Postgres server — `fromPoolLike` adapter exists but is unverified against one;
+      there is no Postgres in the dev environment yet
 - [ ] Screens wired to real persistence; fixtures retired
 - [ ] `strata-verifier` pass on every query path
 
