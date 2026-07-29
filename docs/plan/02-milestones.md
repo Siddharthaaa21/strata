@@ -32,7 +32,11 @@ they are closed.
 - [x] **Resolve `risk-tenancy`** — user / team / workspace scoping. Routed to `strata-architect`;
       closed by `docs/adr/0002-tenancy-workspace-scope.md` (decision log D9). Workspace-scoped,
       residency separated from capability.
-- [ ] **Resolve `risk-injection`** — the fencing strategy for ingested content served over MCP.
+- [x] **Resolve `risk-injection`** — design closed by ADR 0005 / D12 and implemented in
+      `packages/core/src/untrusted.ts` (12 tests). `Untrusted<T>` types every ingested-derived
+      string; bodies get a nonce-delimited envelope; search metadata is fenced structurally as JSON
+      with one preamble, closing the gap D10 surfaced. Verification (red-team + `strata-verifier`)
+      is M6 work — R2 stays open in the register until then.
 - [x] `packages/core` — `Doc`, `Source`, `ImportEvent` committed, with provenance tracking and
       `workspaceId` per ADR 0002
 - [x] ADR for `risk-tenancy` (0002) — `risk-injection` still needs its own ADR when it closes

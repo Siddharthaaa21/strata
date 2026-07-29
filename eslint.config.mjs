@@ -44,7 +44,7 @@ export default tseslint.config(
     // error" true rather than aspirational; without it, `as Scope` / `as Visible<T>` compiles
     // anywhere with no import and no hook to catch it.
     files: ["**/*.ts", "**/*.tsx"],
-    ignores: ["packages/core/src/index.ts", "packages/core/src/scope-internal.ts"],
+    ignores: ["packages/core/src/index.ts", "packages/core/src/scope-internal.ts", "packages/core/src/untrusted.ts"],
     rules: {
       "no-restricted-syntax": [
         "error",
@@ -52,6 +52,11 @@ export default tseslint.config(
           selector: "TSAsExpression[typeAnnotation.typeName.name='Scope']",
           message:
             "Do not cast to Scope. Take one as a parameter, minted upstream by mintScope (@strata/core/scope-internal, packages/auth only).",
+        },
+        {
+          selector: "TSAsExpression[typeAnnotation.typeName.name='Untrusted']",
+          message:
+            "Do not cast to Untrusted<T>. Obtain it from normalizeIngested/asUntrusted (@strata/core) - ADR 0005.",
         },
         {
           selector: "TSAsExpression[typeAnnotation.typeName.name='Visible']",

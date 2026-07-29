@@ -28,7 +28,7 @@ sequenced (M4/M6); they were waiting on this, not on milestone order.
 
 ---
 
-## R2 — Prompt injection through ingested content · **BLOCKING M6**
+## R2 — Prompt injection through ingested content · **DESIGN CLOSED, verification pending**
 
 `risk-injection`
 
@@ -46,6 +46,16 @@ for this product, not a hypothetical.
 3. Never interpolate ingested text into a tool description, schema, or enum.
 4. Never let ingested text determine control flow in the server.
 5. Log what was returned to whom — injection is detected after the fact or not at all.
+
+**Design closed 2026-07-29 by ADR 0005 / D12**, implemented in `packages/core/src/untrusted.ts`
+(12 tests). `Untrusted<T>` types every ingested-derived string; bodies get a nonce-delimited
+envelope the content cannot forge; search metadata is fenced structurally as JSON with one preamble
+per response, closing the metadata-channel gap D10 surfaced. Ingest normalization strips bidi and
+zero-width characters so the Library and the agent cannot be shown different text.
+
+**Still open, and why this is not fully closed:** none of it has been tested against a real
+injection attempt, and the MCP tools it protects do not exist yet. A red-team pass plus the
+`strata-verifier` sign-off below remain M6 work.
 
 **Closes when** the fencing strategy is implemented and `strata-verifier` signs off on the MCP
 surface.

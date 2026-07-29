@@ -239,3 +239,39 @@ starts if a second opinion is wanted on the ranking weights.
 **Reversible?** The store and the ranking weights, yes — pgvector is additive, reweighting is a
 reindex. The `(workspace_id, source_id, external_id)` uniqueness constraint is not, but that is
 inherited from ADR 0003 rather than chosen here.
+
+---
+### D12 — Untrusted content is a type, fenced per channel
+**2026-07-29** · architecture · closes R2's design half · ADR: `docs/adr/0005-untrusted-content.md`
+
+Every string derived from ingested content is `Untrusted<T>`, discharged only by `fence()` or
+`forDisplay()`. Typed rather than checked at the MCP boundary because the boundary moves: a
+summarizer, related-docs, or "Ask agent about this" would each silently bypass a boundary check,
+and nothing would fail to compile. Same witness pattern as `Visible<T>`, same `as` bypass, same
+`no-restricted-syntax` backstop — verified by planting a cast and confirming the rule fires.
+
+Fencing depends on the channel. Bodies get a nonce-delimited envelope; the nonce is random per
+response, never derived from content, and stripped from the content before wrapping, so a document
+cannot close its own fence. Search metadata is fenced *structurally* — JSON string values under
+labelled keys, with one preamble per response — which closes the gap D10 surfaced: a document
+*titled* as an instruction was not covered by "fence the returned content as data". Per-field
+warnings were rejected: cost scales with result count and repetition teaches a model to skip them.
+
+Ingest normalization strips bidi overrides, zero-width characters, and C0/C1 controls. This is not
+injection prevention and is not claimed to be — it stops an injection being *invisible* to the human
+reviewing the Library, since bidi controls reorder rendered text without changing the bytes a model
+reads.
+
+Rejected: LLM-based injection classification (a model call per doc, itself injectable, and pulls a
+model dependency into ingest that D10 kept out); stripping suspicious phrasing at ingest (unbounded
+and lossy — "ignore previous instructions" is legitimate content in a document *about* injection,
+which this corpus will contain); a fixed delimiter (content can close it early).
+
+Honest limit, recorded rather than glossed: this reduces likelihood and blast radius, it does not
+eliminate injection. Any design that serves text to a model is injectable in principle, and nothing
+here has yet been tested against a real attempt. R2 stays open in the register until a red-team pass
+and a `strata-verifier` sign-off in M6.
+
+**Reversible?** Yes at the type level — additive, no stored data or schema change, no MCP signature
+change (the tools do not exist yet). The standing cost is deliberate friction: every future consumer
+of `Doc` must discharge `Untrusted<T>` explicitly.
