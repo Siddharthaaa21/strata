@@ -33,11 +33,45 @@ case "$rel" in
     ;;
 esac
 
+# --- Guardrail 1b: Scope may only be minted from packages/auth ------------------
+# ADR 0002: mintScope is the only way to construct a Scope. This is a fast, best-effort
+# tripwire on the import path only — it does NOT stop `{...} as Scope` (no import
+# needed for that; the real backstop is the no-restricted-syntax ESLint rule in
+# eslint.config.mjs, checked by `npm run verify`). Catches both the package-subpath
+# and relative-path forms of the import.
+case "$rel" in
+  packages/auth/*|packages/core/src/scope-internal.ts|*.test.ts|*.test.tsx) ;;
+  *.ts|*.tsx|*.js|*.jsx)
+    if grep -nE "(@strata/core/scope-internal|['\"][./]*scope-internal['\"])" "$file" >/dev/null 2>&1; then
+      echo "Scope discipline: $rel imports scope-internal." >&2
+      echo "mintScope is minted from packages/auth only (see docs/adr/0002-tenancy-workspace-scope.md)." >&2
+      echo "Take a Scope as a parameter instead of minting one here." >&2
+      exit 2
+    fi
+    ;;
+esac
+
 # --- Guardrail 2: context graph must stay in sync -------------------------------
 case "$rel" in
   context-graph/nodes/*.md)
     echo "Context-graph node changed. Run 'npm run graph -- --check' before finishing." >&2
     exit 2
+    ;;
+esac
+
+# --- Guardrail 3: graph-worthy code needs a node kept current, continuously -----
+# CLAUDE.md: "When you add a screen, contract, service, or make a decision that
+# constrains future work, add or update its node in the same change." This fires on
+# every edit to a graph-worthy path, for as long as the agent keeps editing, until a
+# context-graph/nodes file also shows as changed in this working tree.
+case "$rel" in
+  apps/web/src/app/*|apps/web/src/components/*|packages/core/src/*|packages/ingest/src/*|apps/mcp/src/*|docs/adr/*)
+    if [ -z "$(git -C "$repo_root" status --porcelain -- context-graph/nodes 2>/dev/null)" ]; then
+      echo "Graph-worthy file changed ($rel) with no context-graph/nodes edit yet this session." >&2
+      echo "CLAUDE.md non-negotiable: add or update its node (screen/contract/service/decision) in the same change." >&2
+      echo "Add/update context-graph/nodes/<id>.md now (or delegate to strata-cartographer) before finishing." >&2
+      exit 2
+    fi
     ;;
 esac
 

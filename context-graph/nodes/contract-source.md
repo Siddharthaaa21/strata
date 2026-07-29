@@ -2,12 +2,13 @@
 id: contract-source
 kind: contract
 title: Source
-status: planned
+status: done
 owner: core
-spec: docs/plan/03-data-contracts.md
-depends_on: []
+spec: packages/core/src/index.ts
+depends_on: [dec-tenancy]
 ---
 
-A connected origin: Claude, Cursor, GitHub, local Markdown. Holds connection status and per-source
-tint used by the UI. Credentials are referenced, never embedded — a Source is serialized to the
-client and to MCP callers.
+A connected origin: Claude, Cursor, GitHub, local Markdown. Holds kind, name, description, connection
+status, and lastSyncAt. Credentials are referenced via credentialRef, never embedded. Includes
+workspaceId field for tenancy (ADR 0002) — critical for list_sources tool to avoid joins or leaking
+workspace-wide connections. Serialized to both client and MCP callers.

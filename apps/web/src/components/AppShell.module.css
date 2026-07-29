@@ -1,0 +1,35 @@
+/* Screen shell shared by all three handoff screens — Vault.dc.html:25,37,85. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--surface-page);
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+/* Sidebar renders its mobile top bar and its nav overlay as siblings (a Fragment), both direct
+   children of `.body` alongside `.main`. In row direction that puts the top bar beside `.main`,
+   stretched to full height, instead of above it. Below the breakpoint `.body` stacks in a column
+   instead: the (display:none-by-default) nav contributes no space, and the top bar sits above
+   `.main` as a normal block. Matches the 859.98px threshold used in Sidebar.module.css. */
+@media (max-width: 859.98px) {
+  .body {
+    flex-direction: column;
+  }
+}

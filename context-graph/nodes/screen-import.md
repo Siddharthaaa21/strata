@@ -2,7 +2,7 @@
 id: screen-import
 kind: screen
 title: Import & Sources
-status: planned
+status: done
 owner: web
 spec: design/handoff/README.md:20
 depends_on: [contract-source, contract-import-event, comp-connector-row, comp-sidebar]

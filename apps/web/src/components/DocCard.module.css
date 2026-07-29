@@ -1,0 +1,50 @@
+/* comp-doc-card — design/handoff/README.md:17, Vault.dc.html:100-108 */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  cursor: pointer;
+  transition: var(--motion-card-transition);
+}
+
+.card:hover {
+  /* No shadow change — Vault.dc.html:101 */
+  transform: var(--motion-card-hover);
+}
+
+.body {
+  padding: var(--space-card-padding);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-card-gap);
+  flex: 1;
+}
+
+.source {
+  font-size: var(--text-label);
+  font-weight: 600;
+}
+
+.title {
+  font-size: var(--text-card-title);
+  font-weight: 600;
+  line-height: var(--leading-card-title);
+  color: var(--ink-title);
+  margin: 0;
+}
+
+.excerpt {
+  font-size: var(--text-meta);
+  color: var(--ink-muted);
+  line-height: var(--leading-card-excerpt);
+  flex: 1;
+}
+
+.meta {
+  font-size: var(--text-label);
+  color: var(--ink-faint);
+}

@@ -54,6 +54,13 @@ npm run verify       # typecheck + lint + test + graph — the gate before any c
 contracts, services, decisions, risks, milestones. Each node declares `depends_on` edges to
 other node ids.
 
+`depends_on` means **"read this before starting work here,"** not "blocked on this." Blocking
+lives in a node's `status:` field (and authoritatively in `docs/plan/04-risk-register.md`'s
+**BLOCKING** markers) and does not propagate along edges — `svc-ingest` depending on
+`risk-injection` means "read R2 first," even while R2 stays open, because R2 blocks M6
+specifically, not ingestion (see ADR 0003 / decision log D10 for a worked example of resolving
+this ambiguity instead of guessing).
+
 Use it to decide **what to read before starting work**, instead of grepping blindly:
 
 ```

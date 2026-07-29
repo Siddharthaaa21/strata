@@ -117,3 +117,125 @@ than it was buying.
 
 **Reversible?** Yes — screens built against fixtures don't need touching when R1 closes; only the
 data-fetching layer that replaces fixtures does.
+
+---
+
+### D9 — Closes R1: `Doc` is workspace-scoped
+**2026-07-28** · architecture · ADR: `docs/adr/0002-tenancy-workspace-scope.md` · closes `risk-tenancy`
+
+Routed to `strata-architect`. A `Doc` is scoped to a workspace — flat, non-hierarchical. Residency
+(`workspaceId` on `Doc`/`Source`/`ImportEvent`) is modeled separately from capability (`Grant`,
+carried by the caller): the north-star requirement that a teammate can find a doc they never knew
+existed rules out user scope outright, and "not an enterprise wiki" rules out a team/org hierarchy.
+An agent is a distinct principal from the user who connected it (per M7), so per-agent scope is a
+`Grant` that narrows within a workspace, not a second field on `Doc`.
+
+Enforcement leans on the type system but is not purely compiler-backed: `Scope`/`Visible<T>` are
+brands, and a bare `as Scope` cast compiles with no import for a `post-edit` hook to catch — a
+`strata-verifier` pass caught this after the fact and compiled a working bypass. The real backstop
+added in the same fix: a `no-restricted-syntax` ESLint rule (`eslint.config.mjs`) that bans casting
+to `Scope`/`Visible<T>` outside `mintScope` (`packages/core/src/scope-internal.ts`) and
+`assertVisible`/`assertSourceVisible` (`packages/core/src/index.ts`), checked on every `npm run
+verify`. Every value reaching an MCP payload must pass `assertVisible`/`assertSourceVisible` first,
+redundantly with the store-level filter, per M6's "scope re-checked inside every tool" requirement
+— see ADR 0002 for the full correction.
+
+Rejected: per-doc ACLs (pushes permission decisions into ingestion, and per-doc sharing is
+explicitly deferred); narrowing agent grants by `folder`/`tags` (both are `Derived<T>` and can
+carry `model` provenance — an injection vector into access control, R2); `workspace_id` as an
+explicit MCP tool argument (welds a published tool signature to a revisable decision).
+
+Left open, routed rather than guessed: whether a user can belong to more than one workspace (folds
+into R7); that R7 now needs machine credentials distinct from user sessions; whether per-source
+`Grant` narrowing is enough for M7's Agent Access screen; `Scope` lifetime vs. per-request lookup
+cost (revisit with R6/`svc-storage`).
+
+Unblocks the `svc-storage`/`svc-mcp` holds D8 left standing — those wait on milestone sequencing
+now, not on this risk.
+
+**Reversible?** Moderately. See ADR 0002's Migration risk section — a later change to the scope
+unit touches three tables' leading indexed column, but no MCP tool signature, screen, or the
+ingestion dedupe key, because none of those touch `workspaceId` directly.
+
+---
+
+### D10 — Reopens M5-after-M4 sequencing: local Markdown ingest logic unblocked ahead of `svc-storage`
+**2026-07-29** · planning · reopens the M4-then-M5 ordering in `02-milestones.md` · ADR: `docs/adr/0003-ingest-identity.md`
+
+Same shape of exception as D8: the milestone doc sequences M5 (ingestion) after M4 (storage), and
+`svc-ingest`'s "persist" stage genuinely cannot be built before `svc-storage` exists. That reasoning
+holds for persistence. It does not hold for the local Markdown adapter's fetch → normalize → dedupe
+→ `ImportEvent` logic, which `strata-architect` (routed for the identity/normalization design — see
+ADR 0003) scoped deliberately to stop one field short of a real `Doc`: it produces a `PendingDoc`
+(everything `Doc` has except `id`/`bodyRef`) and complete `ImportEvent` records, tested entirely
+against in-memory fixtures with an injected filesystem port — no live disk, no network, no
+`svc-storage` dependency of any kind.
+
+The architect flagged this sequencing question explicitly rather than silently building ahead
+(`OPEN` item 6 in its design), and asked the dispatching agent to confirm the exception and record
+it here, matching D8's precedent. Confirmed: build the storage-free portion now.
+
+Why this doesn't quietly reintroduce `risk-injection` (R2) into M5, which is still open and still
+blocks M6 only: the design commits to three invariants for the M5 scope — no `Derived<T>` value
+this adapter produces ever carries `provenance: 'model'` (no LLM call anywhere in the path);
+ingested text (frontmatter, body) never selects a code path, only a value; and ingested text never
+reaches `ImportEvent.error.message` (a caught parser error's own `.message` can itself embed
+source text — e.g. `js-yaml` — and must be discarded in favor of a fixed template keyed on error
+code, never interpolated raw). `context-graph/nodes/svc-ingest.md`'s `depends_on: [..., risk-injection]`
+edge stays — it means "read R2 before touching this code," not "blocked on R2," which is a real
+ambiguity in how this repo's graph edges are documented; see the one-line clarification added to
+`CLAUDE.md`'s Context graph section in this same change.
+
+One real gap this surfaced rather than closed: R2's mitigation list is written about ingested
+*content*; `search_docs` returns `title`/`excerpt`/`tags`, all derived from that same untrusted
+content under this design. "Fence the returned content as data" does not obviously cover a
+document titled as an instruction. Recorded as a sub-item under R2 in the risk register — for the
+eventual injection ADR to resolve, not this one.
+
+Rejected: waiting for M4 to close before starting any M5 work (the same cost D8 rejected — holding
+well-scoped, low-risk work hostage to an unrelated milestone's sequencing); resolving R2's
+metadata-channel gap as part of this design (out of scope — this is an ingest design, not the
+injection-fencing ADR).
+
+**Reversible?** Yes, with one real cost named up front, not hidden: `externalId` is the
+NFC-normalized relative file path, so a file rename is currently a delete-plus-create, not an
+update, and the old `DocId` (and anything attached to it later) is lost. That is a property of
+path-based identity, not an oversight, and is tracked as an open item in ADR 0003 rather than
+deferred silently. The storage-free scope itself needs no rework when `svc-storage` lands — only
+the `persist` stage (not yet built) plugs in underneath it.
+
+---
+### D11 — Postgres as the only datastore; native full-text retrieval, semantic search deferred
+**2026-07-29** · architecture · closes R4 and R6 · ADR: `docs/adr/0004-storage-and-search.md`
+
+R6 required storage and search to be decided in one pass. Postgres with native `tsvector` ranking,
+no separate search service. `docs` (hot metadata, indexed) splits from `doc_bodies` (cold) because
+`contract-doc` requires metadata-only retrieval — a requirement, not an optimization.
+
+Ranking is weighted for the agent case per R4: title (A) > tags with `user`/`source` provenance (B)
+> excerpt and folder (C) > `model`-provenance tags and body (D). Provenance-weighted tags are the
+substantive part — `Derived<T>` carries provenance for re-sync safety, and ranking is the second
+thing that buys. Recency is a tiebreaker only, because `updatedAt` derives from mtime (ADR 0003)
+and is therefore writer-influenced.
+
+Scope is applied inside the ranking query, never after it. Rank-then-filter is both a tenancy leak
+and a ranking bug: the top-N is drawn from the whole corpus before scoping, which starves small
+workspaces.
+
+Upsert honors ADR 0003's constraint exactly — `ON CONFLICT (workspace_id, source_id, external_id)`,
+with the existing id winning so the ingest-minted `DocId` stays a proposal and a retry after a
+mid-persist crash converges instead of double-writing.
+
+Rejected: a dedicated search engine (a second system and a sync path that can silently drift —
+exactly what R6 names); SQLite + FTS5 (good, but tenancy plus concurrent ingest plus a hosted MCP
+server all want a real server, and migrating later rewrites every query); pgvector now (puts an
+embedding call in the ingest path, pulling R2 forward into M5 and adding per-doc model cost before
+anyone has asked for semantic recall — seam designed, decision deferred).
+
+Process note: decided in the main loop rather than routed to `strata-architect`, because subagents
+were not in use for this session. Worth re-running through the architect before implementation
+starts if a second opinion is wanted on the ranking weights.
+
+**Reversible?** The store and the ranking weights, yes — pgvector is additive, reweighting is a
+reindex. The `(workspace_id, source_id, external_id)` uniqueness constraint is not, but that is
+inherited from ADR 0003 rather than chosen here.

@@ -45,6 +45,12 @@ export const ink = {
   navIconInactive: 'oklch(70% 0.02 75)',
   /** Inactive filter pill label. Vault.dc.html:249-252 */
   controlText: 'oklch(35% 0.02 75)',
+  /** Connector row one-line description. Vault.dc.html:127 */
+  connectorDesc: 'oklch(50% 0.02 75)',
+  /** "Recent imports" section label. Vault.dc.html:135 */
+  sectionLabel: 'oklch(38% 0.02 75)',
+  /** Reader code-block text. Vault.dc.html:160 */
+  code: 'oklch(30% 0.02 75)',
 } as const;
 
 /**
@@ -102,6 +108,8 @@ export const fontSize = {
 export const lineHeight = {
   cardTitle: '1.35', // Vault.dc.html:104
   cardExcerpt: '1.5', // Vault.dc.html:105
+  /** Reader title. Fixed across breakpoints (unlike reader body) — Vault.dc.html:153 */
+  readerTitle: '1.2',
 } as const;
 
 export const radius = {
@@ -137,11 +145,20 @@ export const layout = {
   closeTile: '30px',
   /** Sidebar nav item leading dot. Vault.dc.html:58 */
   navDotSize: '7px',
+  /** Connector row initials tile. Vault.dc.html:124 */
+  connectorIconTile: '36px',
 } as const;
 
 export const motion = {
   cardHover: 'translateY(-2px)', // no shadow change — Vault.dc.html:101
   cardTransition: 'transform .15s',
+} as const;
+
+/** Vault.dc.html:31,44 (brand wordmark), :89 (library screen title). Never round or eyeball. */
+export const letterSpacing = {
+  tight: '-0.01em',
+  /** Reader rail uppercase section labels (Tags / Related). Vault.dc.html:168,176 */
+  wide: '0.05em',
 } as const;
 
 /**
@@ -161,6 +178,32 @@ export const spacing = {
   filterRowGap: '8px', // Vault.dc.html:93
   filterPillPadding: '7px 15px', // Vault.dc.html:95
   headerGap: '26px', // Vault.dc.html:87 (header/filters/grid column gap)
+  subtitleGap: '4px', // Vault.dc.html:90 (screen title to subtitle)
+
+  // Import & Sources — Vault.dc.html:114-146
+  importHeaderGap: '28px', // Vault.dc.html:115 (screen-level column gap)
+  /** Connector list flex gap AND the "Recent imports" label's margin-bottom — both 10px. Vault.dc.html:121,135 */
+  importSectionGap: '10px',
+  connectorRowPadding: '16px 18px', // Vault.dc.html:123
+  connectorRowGap: '14px', // Vault.dc.html:123 (icon/text/action row gap)
+  recentImportRowPadding: '12px 4px', // Vault.dc.html:138
+  recentImportRowGap: '14px', // Vault.dc.html:138
+
+  // Document Reader — Vault.dc.html:148-186
+  readerLabelGap: '12px', // margin-bottom under the source/project label — Vault.dc.html:152
+  readerMetaMarginTop: '14px', // Vault.dc.html:154
+  readerMetaPaddingBottom: '24px', // Vault.dc.html:154
+  readerBodyMarginTop: '28px', // Vault.dc.html:155
+  readerBodyGap: '18px', // gap between paragraphs/headings/code block — Vault.dc.html:155
+  readerHeadingMarginTop: '6px', // Vault.dc.html:157,159
+  codeBlockPadding: '14px 16px', // Vault.dc.html:160
+  readerRailGap: '24px', // Vault.dc.html:166
+  readerRailPadding: '32px 24px', // desktop rail padding — Vault.dc.html:237 (mobile reuses mainPaddingMobile — Vault.dc.html:236, identical value)
+  railLabelGap: '9px', // Tags/Related label margin-bottom — Vault.dc.html:168,176
+  tagListGap: '6px', // Vault.dc.html:169
+  tagPillPadding: '4px 10px', // Vault.dc.html:171
+  relatedListGap: '12px', // Vault.dc.html:177
+  ctaPadding: '12px 14px', // Vault.dc.html:183
 } as const;
 
 export type SourceKind = keyof typeof sourceTint;

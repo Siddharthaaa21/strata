@@ -20,7 +20,9 @@
       "Bash(git branch:*)",
       "Bash(rg:*)",
       "Bash(ls:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git push -u origin m*:*)",
+      "Bash(git push origin m*:*)"
     ],
     "deny": [
       "Read(./.env)",
@@ -29,11 +31,16 @@
       "Read(./**/.env.*)",
       "Read(./**/*.pem)",
       "Read(./**/id_rsa*)",
-      "Bash(git push:*)",
       "Bash(npm publish:*)",
       "Bash(rm -rf:*)",
       "Edit(./design/handoff/**)",
-      "Write(./design/handoff/**)"
+      "Write(./design/handoff/**)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push origin master:*)",
+      "Bash(git push origin main:*)",
+      "Bash(git push origin HEAD:master:*)",
+      "Bash(git push origin HEAD:main:*)"
     ]
   },
   "hooks": {
@@ -44,6 +51,10 @@
           {
             "type": "command",
             "command": ".claude/hooks/post-edit.sh"
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/binary-guard.sh"
           }
         ]
       }

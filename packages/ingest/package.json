@@ -10,5 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.0"
   }
 }

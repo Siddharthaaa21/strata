@@ -2,7 +2,7 @@
 id: screen-library
 kind: screen
 title: Library
-status: planned
+status: done
 owner: web
 spec: design/handoff/README.md:14
 depends_on: [contract-doc, comp-doc-card, comp-sidebar, tokens-color, tokens-type]

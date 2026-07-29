@@ -1,0 +1,46 @@
+/* comp-connector-row — design/handoff/README.md:23, Vault.dc.html:122-131 */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-connector-row-gap);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-row);
+  padding: var(--space-connector-row-padding);
+}
+
+.icon {
+  flex: none;
+  width: var(--size-connector-icon-tile);
+  height: var(--size-connector-icon-tile);
+  border-radius: var(--radius-tile);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+}
+
+.name {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--ink-base);
+}
+
+.desc {
+  font-size: var(--text-small);
+  color: var(--ink-connector-desc);
+}
+
+.action {
+  flex: none;
+  font-size: var(--text-small);
+  font-weight: 600;
+  cursor: pointer;
+}
