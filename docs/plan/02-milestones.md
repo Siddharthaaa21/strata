@@ -72,11 +72,25 @@ waiting on `risk-tenancy` — they are waiting on milestone sequencing (M4/M6 ha
 
 ## M3 — Reader and Import
 
-- [ ] `screen-reader` — including the mobile stack and the body-size increase
-- [ ] `comp-connector-row`, `screen-import` — connectors as visual endpoints, honestly labelled
-- [ ] `/fidelity-check` clean across all three screens
+- [x] `screen-reader` — including the mobile stack and the body-size increase (18.5px/1.85 on
+      mobile vs 17.5px/1.75 on desktop; the body grows while the title shrinks 34px → 26px)
+- [x] `comp-connector-row`, `screen-import` — connectors as visual endpoints, honestly labelled.
+      Two handoff-internal disagreements resolved per R10 (HTML wins): connector row padding is
+      the exact `16px 18px` from `Vault.dc.html:123`, not README's "16-18px" range; and the
+      handoff has no "+ Add source" control anywhere in `Vault.dc.html` despite the README
+      implying one, so none was built.
+- [x] `/fidelity-check` clean across all three screens — value-by-value spot check against the
+      handoff: connector row padding/tile/radii, reader rail 280px + border side flip, content
+      660px, import column 840px, and the recent-imports divider correctly on `border-hairline`
+      (91%) rather than the card's 89%. No raw `oklch()` anywhere in `apps/web`.
 
-**Done when** all three handoff screens are pixel-close against fixtures.
+**Done when** all three handoff screens are pixel-close against fixtures. — **Met.**
+
+Open, carried out of M3 rather than closed inside it: failed `ImportEvent`s are excluded from the
+Recent Imports list (the list has no status indicator by design, so a failed row reads as a
+success). ADR 0003 argues failures must not be silent. Recording and rendering are different
+things and this settles only the latter for this one list; **where a failed import surfaces to the
+user is unresolved** and belongs with the Import screen's real-data pass in M4.
 
 ---
 
