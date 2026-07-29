@@ -1,0 +1,64 @@
+/* screen-import — design/handoff/README.md:20-25, Vault.dc.html:114-146 */
+
+.screen {
+  padding: var(--main-padding);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-import-header-gap);
+  max-width: var(--import-column-max);
+}
+
+.title {
+  font-size: var(--text-screen-title);
+  font-weight: 600;
+  letter-spacing: var(--letter-spacing-tight);
+  margin: 0;
+}
+
+.subtitle {
+  color: var(--ink-muted);
+  font-size: var(--text-body);
+  margin-top: var(--space-subtitle-gap);
+}
+
+.connectorList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-import-section-gap);
+}
+
+.sectionLabel {
+  font-size: var(--text-nav);
+  font-weight: 600;
+  color: var(--ink-section-label);
+  margin-bottom: var(--space-import-section-gap);
+}
+
+.recentList {
+  display: flex;
+  flex-direction: column;
+}
+
+.recentRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-recent-import-row-gap);
+  padding: var(--space-recent-import-row-padding);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.recentTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-nav-item);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recentTime {
+  flex: none;
+  font-size: var(--text-small);
+  color: var(--ink-subtle);
+}

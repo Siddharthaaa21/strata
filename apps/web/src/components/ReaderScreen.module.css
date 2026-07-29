@@ -1,0 +1,143 @@
+/* screen-reader — design/handoff/README.md:27-31, Vault.dc.html:148-186 */
+
+.screen {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+}
+
+.contentWrap {
+  flex: 1;
+  min-width: 0;
+  padding: var(--main-padding);
+  display: flex;
+  justify-content: center;
+}
+
+.content {
+  max-width: var(--reader-content-max);
+  width: 100%;
+}
+
+.label {
+  font-size: var(--text-meta);
+  font-weight: 600;
+  margin-bottom: var(--space-reader-label-gap);
+}
+
+.title {
+  font-size: var(--text-reader-title);
+  font-weight: 600;
+  line-height: var(--leading-reader-title);
+  letter-spacing: var(--letter-spacing-tight);
+  margin: 0;
+}
+
+.meta {
+  margin-top: var(--space-reader-meta-margin-top);
+  padding-bottom: var(--space-reader-meta-padding-bottom);
+  border-bottom: 1px solid var(--border-card);
+  font-size: var(--text-meta);
+  color: var(--ink-muted);
+}
+
+.body {
+  font-size: var(--text-reader-body);
+  line-height: var(--leading-reader-body);
+  color: var(--ink-body);
+  margin-top: var(--space-reader-body-margin-top);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-reader-body-gap);
+}
+
+.body p {
+  margin: 0;
+}
+
+.heading {
+  font-weight: 600;
+  font-size: var(--text-reader-heading);
+  margin-top: var(--space-reader-heading-margin-top);
+}
+
+.code {
+  background: var(--surface-code);
+  border-radius: var(--radius-md);
+  padding: var(--space-code-block-padding);
+  font-family: var(--font-mono);
+  font-size: var(--text-nav);
+  color: var(--ink-code);
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-reader-rail-gap);
+  overflow: auto;
+  width: var(--reader-rail-width);
+  flex: none;
+  border-left: 1px solid var(--border-structural);
+  padding: var(--space-reader-rail-padding);
+}
+
+.railLabel {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  color: var(--ink-subtle);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  margin-bottom: var(--space-rail-label-gap);
+}
+
+.tagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-tag-list-gap);
+}
+
+.tag {
+  font-size: var(--text-small);
+  padding: var(--space-tag-pill-padding);
+  border-radius: var(--radius-pill);
+  background: var(--surface-chip);
+}
+
+.relatedList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-related-list-gap);
+}
+
+.related {
+  font-size: var(--text-nav);
+  font-weight: 500;
+  color: var(--ink-strong);
+  cursor: pointer;
+}
+
+.cta {
+  margin-top: auto;
+  border-radius: var(--radius-cta);
+  padding: var(--space-cta-padding);
+  color: var(--ink-inverse);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+
+/* The only breakpoint — README:33-38. Reader stacks content-first, rail below, with a top border
+   instead of a left one. */
+@media (max-width: 859.98px) {
+  .screen {
+    flex-direction: column;
+  }
+
+  .rail {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border-structural);
+  }
+}

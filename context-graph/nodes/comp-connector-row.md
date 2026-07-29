@@ -2,7 +2,7 @@
 id: comp-connector-row
 kind: component
 title: Connector row
-status: planned
+status: done
 owner: web
 spec: design/handoff/README.md:23
 depends_on: [contract-source, tokens-color, dec-stack]

@@ -11,7 +11,7 @@
  * fixture workspace — there is no cross-workspace scoping to exercise here, since fixtures have
  * no query/store layer for a `Scope` to be checked against (decision log D8 still covers that gap).
  */
-import type { BodyRef, Derived, Doc, DocId, Source, SourceId, WorkspaceId } from './index';
+import type { BodyRef, Derived, Doc, DocId, ImportEvent, Source, SourceId, WorkspaceId } from './index';
 
 const workspaceId = 'ws-fixture' as WorkspaceId;
 
@@ -239,5 +239,55 @@ export const docs: readonly Doc[] = [
     updatedAt: '2026-07-08T13:10:00Z',
     createdAt: '2026-06-20T09:00:00Z',
     bodyRef: 'body-access-review-checklist' as BodyRef,
+  },
+] as const;
+
+/**
+ * One record per ingestion attempt (contract-import-event), for the Import & Sources screen's
+ * "Recent imports" list. Deliberately a mix of every `ImportEvent.status` — `skipped-duplicate`
+ * is a normal idempotent-reimport outcome, not an error (see packages/core/src/index.ts), and
+ * `failed` has no `docId` here because the GitHub source is disconnected (D6) and the failure
+ * happened before any Doc could exist.
+ */
+export const importEvents: readonly ImportEvent[] = [
+  {
+    id: 'evt-backfill-idempotency',
+    workspaceId,
+    sourceId: 'src-claude' as SourceId,
+    docId: 'doc-backfill-idempotency' as DocId,
+    status: 'imported',
+    occurredAt: '2026-07-28T09:41:00Z',
+  },
+  {
+    id: 'evt-rate-limiter-composer',
+    workspaceId,
+    sourceId: 'src-cursor' as SourceId,
+    docId: 'doc-rate-limiter-composer' as DocId,
+    status: 'updated',
+    occurredAt: '2026-07-28T09:02:00Z',
+  },
+  {
+    id: 'evt-oncall-runbook-draft',
+    workspaceId,
+    sourceId: 'src-markdown' as SourceId,
+    docId: 'doc-oncall-runbook-draft' as DocId,
+    status: 'skipped-duplicate',
+    occurredAt: '2026-07-27T20:00:00Z',
+  },
+  {
+    id: 'evt-prompt-schema-review',
+    workspaceId,
+    sourceId: 'src-claude' as SourceId,
+    docId: 'doc-prompt-schema-review' as DocId,
+    status: 'imported',
+    occurredAt: '2026-07-28T07:15:00Z',
+  },
+  {
+    id: 'evt-github-auth-expired',
+    workspaceId,
+    sourceId: 'src-github' as SourceId,
+    status: 'failed',
+    error: { code: 'auth_expired', message: 'GitHub credential expired before sync could start.' },
+    occurredAt: '2026-07-28T06:00:00Z',
   },
 ] as const;

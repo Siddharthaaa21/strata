@@ -2,7 +2,7 @@
 id: screen-reader
 kind: screen
 title: Document Reader
-status: planned
+status: done
 owner: web
 spec: design/handoff/README.md:27
 depends_on: [contract-doc, comp-sidebar, tokens-color, tokens-type]

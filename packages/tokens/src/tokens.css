@@ -28,6 +28,9 @@
   --ink-nav-inactive: oklch(40% 0.02 75); /* Vault.dc.html:214 */
   --ink-nav-icon-inactive: oklch(70% 0.02 75); /* Vault.dc.html:216 */
   --ink-control-text: oklch(35% 0.02 75); /* inactive filter pill — Vault.dc.html:249-252 */
+  --ink-connector-desc: oklch(50% 0.02 75); /* connector row description — Vault.dc.html:127 */
+  --ink-section-label: oklch(38% 0.02 75); /* "Recent imports" label — Vault.dc.html:135 */
+  --ink-code: oklch(30% 0.02 75); /* reader code-block text — Vault.dc.html:160 */
 
   /* Accent — overridable per instance; do not hardcode downstream */
   --accent: oklch(55% 0.23 300);
@@ -67,7 +70,9 @@
   --text-brand: 15px; /* sidebar/top-bar wordmark — Vault.dc.html:31,44 */
   --leading-card-title: 1.35; /* Vault.dc.html:104 */
   --leading-card-excerpt: 1.5; /* Vault.dc.html:105 */
+  --leading-reader-title: 1.2; /* fixed across breakpoints — Vault.dc.html:153 */
   --letter-spacing-tight: -0.01em; /* Vault.dc.html:31,44,89 */
+  --letter-spacing-wide: 0.05em; /* reader rail uppercase labels — Vault.dc.html:168,176 */
 
   /* Motion */
   --motion-card-hover: translateY(-2px); /* no shadow change — Vault.dc.html:101 */
@@ -99,6 +104,7 @@
   --size-hamburger-tile: 34px; /* Vault.dc.html:33 */
   --size-close-tile: 30px; /* Vault.dc.html:47 */
   --size-nav-dot: 7px; /* Vault.dc.html:58 */
+  --size-connector-icon-tile: 36px; /* Vault.dc.html:124 */
   --space-card-padding: 20px; /* Vault.dc.html:102 */
   --space-card-gap: 12px; /* Vault.dc.html:102 */
   --space-sidebar-padding: 22px 16px; /* Vault.dc.html:40 */
@@ -112,6 +118,30 @@
   --space-filter-pill-padding: 7px 15px; /* Vault.dc.html:95 */
   --space-header-gap: 26px; /* Vault.dc.html:87 */
   --space-subtitle-gap: 4px; /* Vault.dc.html:90 */
+
+  /* Import & Sources — Vault.dc.html:114-146 */
+  --space-import-header-gap: 28px; /* Vault.dc.html:115 */
+  --space-import-section-gap: 10px; /* connector list gap AND recent-imports label margin — Vault.dc.html:121,135 */
+  --space-connector-row-padding: 16px 18px; /* Vault.dc.html:123 */
+  --space-connector-row-gap: 14px; /* Vault.dc.html:123 */
+  --space-recent-import-row-padding: 12px 4px; /* Vault.dc.html:138 */
+  --space-recent-import-row-gap: 14px; /* Vault.dc.html:138 */
+
+  /* Document Reader — Vault.dc.html:148-186 */
+  --space-reader-label-gap: 12px; /* Vault.dc.html:152 */
+  --space-reader-meta-margin-top: 14px; /* Vault.dc.html:154 */
+  --space-reader-meta-padding-bottom: 24px; /* Vault.dc.html:154 */
+  --space-reader-body-margin-top: 28px; /* Vault.dc.html:155 */
+  --space-reader-body-gap: 18px; /* Vault.dc.html:155 */
+  --space-reader-heading-margin-top: 6px; /* Vault.dc.html:157,159 */
+  --space-code-block-padding: 14px 16px; /* Vault.dc.html:160 */
+  --space-reader-rail-gap: 24px; /* Vault.dc.html:166 */
+  --space-reader-rail-padding: 32px 24px; /* desktop — Vault.dc.html:237 */
+  --space-rail-label-gap: 9px; /* Vault.dc.html:168,176 */
+  --space-tag-list-gap: 6px; /* Vault.dc.html:169 */
+  --space-tag-pill-padding: 4px 10px; /* Vault.dc.html:171 */
+  --space-related-list-gap: 12px; /* Vault.dc.html:177 */
+  --space-cta-padding: 12px 14px; /* Vault.dc.html:183 */
 }
 
 /* The only breakpoint. README:33-38 — the prototype measures window.innerWidth in JS; the app
@@ -124,5 +154,8 @@
     /* Reader body GROWS on mobile — optimized for reading on a phone. Not a bug. */
     --text-reader-body: 18.5px;
     --leading-reader-body: 1.85;
+    /* Reader rail loses its left border/own padding and becomes a bottom section — same padding
+       as --main-padding's mobile value. Vault.dc.html:236 */
+    --space-reader-rail-padding: 20px 18px;
   }
 }
