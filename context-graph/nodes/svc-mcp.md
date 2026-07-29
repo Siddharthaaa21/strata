@@ -2,15 +2,17 @@
 id: svc-mcp
 kind: service
 title: MCP server
-status: planned
+status: in-progress
 owner: mcp
 spec: .claude/skills/mcp-surface/SKILL.md
-depends_on: [contract-doc, contract-scope, svc-search, dec-tenancy, risk-injection]
+depends_on: [contract-doc, contract-scope, svc-search, dec-tenancy, risk-injection, dec-untrusted-content, dec-storage-search]
 ---
 
-The product's differentiator and its largest security surface, in that order. Read-only to start:
-search_docs, get_doc, list_sources. Every tool re-checks scope itself via `Scope` and
-`assertVisible`/`assertSourceVisible` (`dec-tenancy`, ADR 0002) — `scope` is an explicit handler
-argument, never a tool-schema field. Tool signatures are a published interface — a rename breaks
-agent workflows silently. Still blocked on `risk-injection`, which this decision narrows but does
-not close.
+Read-only surface: search_docs and get_doc are implemented in apps/mcp/src/tools.ts as pure
+handlers, testable without a transport. Every tool re-checks scope itself rather than trusting a
+caller or middleware, workspaceId never appears in a payload, and both NotFound and out-of-scope
+collapse to one indistinguishable error so the error channel is not an enumeration oracle.
+
+Bodies are fenced with a nonce envelope and search metadata structurally as JSON (dec-untrusted-content).
+Still open: list_sources needs a sources table that svc-storage does not have yet; transport wiring
+and a red-team pass wait on a live database.

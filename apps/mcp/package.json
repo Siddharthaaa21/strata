@@ -8,6 +8,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@strata/core": "*"
+    "@strata/core": "*",
+    "@strata/storage": "*"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4"
   }
 }
