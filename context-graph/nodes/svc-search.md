@@ -5,7 +5,7 @@ title: Search and retrieval
 status: planned
 owner: core
 spec: docs/plan/04-risk-register.md
-depends_on: [contract-doc, svc-storage]
+depends_on: [contract-doc, svc-storage, dec-storage-search]
 ---
 
 Powers both the Library filter row and the MCP search_docs tool. Those are different problems —

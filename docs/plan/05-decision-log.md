@@ -203,3 +203,39 @@ update, and the old `DocId` (and anything attached to it later) is lost. That is
 path-based identity, not an oversight, and is tracked as an open item in ADR 0003 rather than
 deferred silently. The storage-free scope itself needs no rework when `svc-storage` lands — only
 the `persist` stage (not yet built) plugs in underneath it.
+
+---
+### D11 — Postgres as the only datastore; native full-text retrieval, semantic search deferred
+**2026-07-29** · architecture · closes R4 and R6 · ADR: `docs/adr/0004-storage-and-search.md`
+
+R6 required storage and search to be decided in one pass. Postgres with native `tsvector` ranking,
+no separate search service. `docs` (hot metadata, indexed) splits from `doc_bodies` (cold) because
+`contract-doc` requires metadata-only retrieval — a requirement, not an optimization.
+
+Ranking is weighted for the agent case per R4: title (A) > tags with `user`/`source` provenance (B)
+> excerpt and folder (C) > `model`-provenance tags and body (D). Provenance-weighted tags are the
+substantive part — `Derived<T>` carries provenance for re-sync safety, and ranking is the second
+thing that buys. Recency is a tiebreaker only, because `updatedAt` derives from mtime (ADR 0003)
+and is therefore writer-influenced.
+
+Scope is applied inside the ranking query, never after it. Rank-then-filter is both a tenancy leak
+and a ranking bug: the top-N is drawn from the whole corpus before scoping, which starves small
+workspaces.
+
+Upsert honors ADR 0003's constraint exactly — `ON CONFLICT (workspace_id, source_id, external_id)`,
+with the existing id winning so the ingest-minted `DocId` stays a proposal and a retry after a
+mid-persist crash converges instead of double-writing.
+
+Rejected: a dedicated search engine (a second system and a sync path that can silently drift —
+exactly what R6 names); SQLite + FTS5 (good, but tenancy plus concurrent ingest plus a hosted MCP
+server all want a real server, and migrating later rewrites every query); pgvector now (puts an
+embedding call in the ingest path, pulling R2 forward into M5 and adding per-doc model cost before
+anyone has asked for semantic recall — seam designed, decision deferred).
+
+Process note: decided in the main loop rather than routed to `strata-architect`, because subagents
+were not in use for this session. Worth re-running through the architect before implementation
+starts if a second opinion is wanted on the ranking weights.
+
+**Reversible?** The store and the ranking weights, yes — pgvector is additive, reweighting is a
+reindex. The `(workspace_id, source_id, external_id)` uniqueness constraint is not, but that is
+inherited from ADR 0003 rather than chosen here.

@@ -100,7 +100,9 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
       built ahead of this milestone per D10): persist must upsert on
       `(workspaceId, sourceId, externalId)` and treat the `DocId` ingestion mints as a proposal,
       not an assertion — a crash mid-persist plus a retry must not double-write.
-- [ ] `svc-search` — ranking designed for the agent case first, UI filtering as its subset
+- [x] `svc-search` — **designed** (ADR 0004 / D11): ranking weighted for the agent case,
+      provenance-weighted tags, recency as tiebreaker only. Implementation still open below.
+- [ ] Implement the schema, upsert, and ranked query from ADR 0004
 - [ ] Screens wired to real persistence; fixtures retired
 - [ ] `strata-verifier` pass on every query path
 

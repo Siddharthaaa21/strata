@@ -76,7 +76,7 @@ point where changing it is most expensive.
 
 ---
 
-## R4 — Search quality is the product, and is unscoped · **HIGH**
+## R4 — Search quality is the product, and is unscoped · **RESOLVED**
 
 `svc-search`
 
@@ -88,6 +88,12 @@ an agent gets one shot at a ranked list and acts on it. Design for the agent cas
 its easy subset, not the other way round.
 
 Coupled to R6: full-text ranking and vector similarity imply different storage.
+
+**Resolved 2026-07-29 by ADR 0004 / D11**, together with R6 as R6 required. Retrieval is
+Postgres-native full-text, ranked for the agent case: title > authored tags > excerpt/folder >
+model-provenance tags and body, with recency as a tiebreaker only. Semantic search is deferred
+with the seam designed. Open item carried forward: FTS corpus statistics are shared within a
+workspace, so one document influences how others rank — bounded by tenancy, not zero.
 
 ---
 
@@ -116,12 +122,16 @@ existing at all.
 
 ---
 
-## R6 — Storage choice coupled to search · **MEDIUM**
+## R6 — Storage choice coupled to search · **RESOLVED**
 
 `svc-storage`
 
 Picking a store before deciding retrieval is how you end up running a second system for search six
 weeks later. Decide R4 and R6 together, in one architect pass.
+
+**Resolved 2026-07-29 by ADR 0004 / D11.** Postgres is the only datastore; retrieval is native
+`tsvector`, so there is no second system. Docs split into hot metadata and a cold body table
+because `contract-doc` requires metadata-only retrieval.
 
 ---
 
