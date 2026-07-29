@@ -19,6 +19,8 @@ import {
   type WorkspaceId,
 } from '@strata/core';
 
+export * from './driver.ts';
+
 /** Minimal driver surface. Satisfied by PGlite (tests) and node-postgres (production). */
 export interface SqlDriver {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;

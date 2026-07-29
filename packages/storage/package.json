@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@strata/core": "*"
+    "@strata/core": "*",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4"
