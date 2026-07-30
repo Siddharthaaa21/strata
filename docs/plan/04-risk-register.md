@@ -28,7 +28,7 @@ sequenced (M4/M6); they were waiting on this, not on milestone order.
 
 ---
 
-## R2 — Prompt injection through ingested content · **DESIGN CLOSED, verification pending**
+## R2 — Prompt injection through ingested content · **MITIGATED, independent review outstanding**
 
 `risk-injection`
 
@@ -53,9 +53,21 @@ envelope the content cannot forge; search metadata is fenced structurally as JSO
 per response, closing the metadata-channel gap D10 surfaced. Ingest normalization strips bidi and
 zero-width characters so the Library and the agent cannot be shown different text.
 
-**Still open, and why this is not fully closed:** none of it has been tested against a real
-injection attempt, and the MCP tools it protects do not exist yet. A red-team pass plus the
-`strata-verifier` sign-off below remain M6 work.
+**Red-teamed 2026-07-29** — `apps/mcp/src/injection.test.ts` drives hostile documents through the
+real route: ingest, PostgreSQL, a real MCP client. Nine attacks, all failing to escape: fence
+forgery with a guessed delimiter, a mimicked preamble, instructions planted in title/tags/folder,
+bidi and zero-width hiding, smuggling content out through an error message, and NUL identity
+forgery.
+
+**Still open, and this is the honest gap:** the red-teaming was written by the same author as the
+defenses, which is materially weaker than an independent adversarial review. Someone who did not
+write `untrusted.ts` will think of attacks its author did not. The `strata-verifier` sign-off below
+is that review and has not happened — subagents were not in use for this session.
+
+**Known limit, recorded as a passing test rather than left implicit:** plausible prose is delivered
+verbatim. ADR 0005 rejected stripping suspicious phrasing as unbounded and lossy, because this
+corpus will legitimately contain documents *about* prompt injection. The mitigation is the label,
+not removal.
 
 **Closes when** the fencing strategy is implemented and `strata-verifier` signs off on the MCP
 surface.

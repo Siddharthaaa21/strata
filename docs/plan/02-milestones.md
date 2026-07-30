@@ -158,7 +158,9 @@ stand-in for a real one.
       transport against real Postgres (PGlite): 8 tests
 - [ ] `packages/auth` is a development stub — `localDevScope` is not authentication. Real
       per-connection principals are M7 (R7)
-- [ ] `strata-verifier` pass focused on tenancy leaks and injection — this is what closes R2
+- [x] Red-team pass on injection — 9 hostile documents through the real route (`injection.test.ts`)
+- [ ] `strata-verifier` pass focused on tenancy leaks and injection — the red-teaming above was
+      written by the same author as the defenses; an independent reviewer is what closes R2
 
 **Done when** a real MCP client can search and read the vault, and the verifier says ship.
 
