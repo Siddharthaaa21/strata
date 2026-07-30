@@ -13,6 +13,10 @@
   },
   "dependencies": {
     "@strata/core": "*",
+    "@strata/storage": "*",
     "js-yaml": "^4.3.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4"
   }
 }

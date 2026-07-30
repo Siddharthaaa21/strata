@@ -135,6 +135,16 @@ export const MAX_RESULTS = 50;
 
 export interface DocStore {
   upsert(scope: Scope, input: UpsertDocInput): Promise<DocId>;
+  /**
+   * Prior state for one `(sourceId, externalId)` pair — what ingest needs to decide
+   * new/unchanged/changed. Keyed on the pair, not the identity triple: the triple cannot tell a
+   * changed file from a new one (ADR 0003).
+   */
+  findKnown(
+    scope: Scope,
+    sourceId: SourceId,
+    externalId: string,
+  ): Promise<{ readonly docId: DocId; readonly contentHash: string } | undefined>;
   search(scope: Scope, query: string, limit?: number): Promise<readonly DocSummary[]>;
   get(scope: Scope, id: DocId): Promise<Visible<Doc> & { readonly body: string }>;
 }
@@ -195,6 +205,17 @@ export function createDocStore(db: SqlDriver): DocStore {
       );
 
       return storedId;
+    },
+
+    async findKnown(scope, sourceId, externalId) {
+      const { workspaceId } = scopeFilter(scope);
+      const { rows } = await db.query<{ id: string; content_hash: string }>(
+        `SELECT id, content_hash FROM docs
+          WHERE workspace_id = $1 AND source_id = $2 AND external_id = $3`,
+        [workspaceId, sourceId, externalId],
+      );
+      const row = rows[0];
+      return row === undefined ? undefined : { docId: row.id as DocId, contentHash: row.content_hash };
     },
 
     /**

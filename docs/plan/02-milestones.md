@@ -134,7 +134,8 @@ stand-in for a real one.
       Persist is the one stage still missing; it needs `svc-storage` wiring (below). Design
       done: `docs/adr/0003-ingest-identity.md`. Build in progress.
 - [x] Normalizer, dedupe, `ImportEvent` emission including failures — designed in ADR 0003
-- [ ] Wire the adapter to `packages/storage` persist (needs a live DB)
+- [x] Wire the adapter to `packages/storage` persist — `persist.ts`, plus a 7-test end-to-end
+      suite covering the whole loop: files -> scan -> dedupe -> persist -> ranked search
 - [ ] Claude and Cursor adapters
 - [ ] GitHub adapter — ships **not connected** by default
 - [ ] Fixture-based tests per adapter; no live network in tests — ADR 0003 specifies an injected

@@ -53,3 +53,4 @@ export interface IngestOutcome {
 export * from './fs-port.ts';
 export * from './markdown.ts';
 export * from './pipeline.ts';
+export * from './persist.ts';
