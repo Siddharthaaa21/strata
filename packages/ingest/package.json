@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@strata/core": "*",
     "js-yaml": "^4.3.0"
   }
 }

@@ -129,9 +129,12 @@ the same shape of exception D8 made for fixture-driven screens ahead of `risk-te
 still waits on M4: actually persisting a normalized doc and retiring the in-memory `PriorIndex`
 stand-in for a real one.
 
-- [ ] Local Markdown adapter first — no OAuth, exercises the whole pipeline end to end. Design
+- [x] Local Markdown adapter — `packages/ingest`, 20 tests against an injected filesystem port.
+      Identity, canonicalization, derivation, dedupe, and `ImportEvent` emission all per ADR 0003.
+      Persist is the one stage still missing; it needs `svc-storage` wiring (below). Design
       done: `docs/adr/0003-ingest-identity.md`. Build in progress.
-- [ ] Normalizer, dedupe, `ImportEvent` emission including failures — designed in ADR 0003
+- [x] Normalizer, dedupe, `ImportEvent` emission including failures — designed in ADR 0003
+- [ ] Wire the adapter to `packages/storage` persist (needs a live DB)
 - [ ] Claude and Cursor adapters
 - [ ] GitHub adapter — ships **not connected** by default
 - [ ] Fixture-based tests per adapter; no live network in tests — ADR 0003 specifies an injected

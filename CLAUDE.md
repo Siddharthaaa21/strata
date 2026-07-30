@@ -12,6 +12,7 @@ through the web app and by AI agents through an MCP server.
 | `apps/mcp` | MCP server. Exposes the vault to agents (`search_docs`, `get_doc`, `list_sources`). |
 | `packages/core` | Domain types and contracts (`Doc`, `Source`, `ImportEvent`). The single source of truth for shapes. |
 | `packages/storage` | Postgres schema, scope-filtered ranked search, idempotent upsert. Tested against real Postgres via PGlite. |
+| `packages/auth` | The only place a `Scope` is minted (ADR 0002). Currently a labelled dev stub — not authentication. |
 | `packages/ingest` | Connector adapters (Claude, Cursor, GitHub, local Markdown) + the normalizer. |
 | `packages/tokens` | Design tokens transcribed from the handoff. Generated CSS + TS exports. |
 | `design/handoff` | **Read-only reference.** Original design bundle. Never edit; never import from. |
