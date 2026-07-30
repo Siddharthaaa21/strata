@@ -8,11 +8,13 @@ spec: .claude/skills/mcp-surface/SKILL.md
 depends_on: [contract-doc, contract-scope, svc-search, dec-tenancy, risk-injection, dec-untrusted-content, dec-storage-search]
 ---
 
-Read-only surface: search_docs and get_doc are implemented in apps/mcp/src/tools.ts as pure
-handlers, testable without a transport. Every tool re-checks scope itself rather than trusting a
-caller or middleware, workspaceId never appears in a payload, and both NotFound and out-of-scope
-collapse to one indistinguishable error so the error channel is not an enumeration oracle.
+All three tools implemented in apps/mcp: search_docs, get_doc, list_sources. Handlers are pure
+functions of (scope, store, input) so the security properties are testable without a transport;
+server.ts is thin SDK wiring over them and is constructed with its stores and scope injected, which
+is what lets an end-to-end test drive a real MCP client against PGlite.
 
-Bodies are fenced with a nonce envelope and search metadata structurally as JSON (dec-untrusted-content).
-Still open: list_sources needs a sources table that svc-storage does not have yet; transport wiring
-and a red-team pass wait on a live database.
+Every tool re-checks scope itself, workspaceId and credentialRef never appear in a payload, and
+NotFound is returned identically for out-of-scope and nonexistent so the error channel is not an
+enumeration oracle. list_sources filters rather than asserts - throwing would itself disclose that
+a hidden source exists. Bodies are fenced with a nonce envelope, search metadata structurally
+(dec-untrusted-content). Still open: the strata-verifier pass that closes R2.

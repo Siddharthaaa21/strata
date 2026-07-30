@@ -20,6 +20,7 @@ import {
 } from '@strata/core';
 
 export * from './driver.ts';
+export * from './sources.ts';
 
 /** Minimal driver surface. Satisfied by PGlite (tests) and node-postgres (production). */
 export interface SqlDriver {
@@ -60,6 +61,19 @@ CREATE TABLE IF NOT EXISTS doc_bodies (
   doc_id       text NOT NULL,
   body         text NOT NULL,
   PRIMARY KEY (workspace_id, doc_id)
+);
+
+CREATE TABLE IF NOT EXISTS sources (
+  workspace_id   text NOT NULL,
+  id             text NOT NULL,
+  kind           text NOT NULL,
+  name           text NOT NULL,
+  description    text NOT NULL,
+  status         text NOT NULL,
+  last_sync_at   timestamptz,
+  -- A reference to a credential, never the credential. See ADR 0002 / contract-source.
+  credential_ref text,
+  PRIMARY KEY (workspace_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS docs_fts ON docs USING GIN (search_vector);

@@ -15,3 +15,7 @@ conflict the stored id wins, so a retry after a mid-persist crash converges inst
 Tested against real Postgres 18 via PGlite (WASM, in-process) — the SQL under test is the SQL that
 ships. Still open: connecting a live server (no Postgres in the dev environment yet) and retiring
 the fixtures the screens currently read from.
+
+Also backs list_sources: a sources table carrying its own workspaceId, since Source is returned
+independently of any Doc and joining through docs would leak every connected account in a workspace
+with no documents.

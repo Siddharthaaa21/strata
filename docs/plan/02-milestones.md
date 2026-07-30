@@ -143,14 +143,17 @@ stand-in for a real one.
 
 ## M6 — MCP surface
 
-- [x] `search_docs`, `get_doc` — read-only handlers in `apps/mcp/src/tools.ts`, 12 tests
-- [ ] `list_sources` — blocked: needs a `sources` table `svc-storage` does not have yet
+- [x] `search_docs`, `get_doc`, `list_sources` — read-only handlers in `apps/mcp/src/tools.ts`
+- [x] `sources` table in `packages/storage`, carrying its own `workspaceId`
 - [x] Scope re-checked inside every tool, not in middleware
 - [x] Content fenced as data on every response — nonce envelope for bodies, structural JSON for
       search metadata (ADR 0005)
 - [x] Tool signatures pinned by a schema test — including that no mutating tool exists (D5)
-- [ ] Transport wiring (MCP SDK) — deferred until a live database exists; a server that cannot
-      answer a query is untestable code
+- [x] Transport wiring (MCP SDK) — `apps/mcp/src/server.ts` plus a stdio entrypoint. Proven by an
+      end-to-end test in which a real SDK `Client` drives the real server over a linked in-memory
+      transport against real Postgres (PGlite): 8 tests
+- [ ] `packages/auth` is a development stub — `localDevScope` is not authentication. Real
+      per-connection principals are M7 (R7)
 - [ ] `strata-verifier` pass focused on tenancy leaks and injection — this is what closes R2
 
 **Done when** a real MCP client can search and read the vault, and the verifier says ship.

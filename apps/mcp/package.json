@@ -8,6 +8,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@strata/auth": "*",
     "@strata/core": "*",
     "@strata/storage": "*"
   },

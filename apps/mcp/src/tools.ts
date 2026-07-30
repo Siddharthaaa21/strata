@@ -14,7 +14,7 @@
  */
 
 import { fence, fenceResults, asUntrusted, type Scope, type DocId } from '@strata/core';
-import { MAX_RESULTS, type DocStore } from '@strata/storage';
+import { MAX_RESULTS, type DocStore, type SourceStore } from '@strata/storage';
 
 /**
  * Tool signatures are a published interface. An agent's stored workflow depends on them, and a
@@ -53,6 +53,18 @@ export const TOOL_SCHEMAS = {
         doc_id: { type: 'string', description: 'Document id from search_docs.' },
       },
       required: ['doc_id'],
+      additionalProperties: false,
+    },
+  },
+  list_sources: {
+    name: 'list_sources',
+    description:
+      'List the connected document sources this credential can reach. Returns no credentials and ' +
+      'no account identifiers.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
       additionalProperties: false,
     },
   },
@@ -141,4 +153,35 @@ export async function getDoc(scope: Scope, store: DocStore, input: { doc_id?: un
     // envelope, per ADR 0005.
     content: fence(asUntrusted(doc.body)),
   };
+}
+
+/** What a source looks like on the wire. No workspaceId, no credentialRef. */
+export interface SourceInfo {
+  readonly source_id: string;
+  readonly kind: string;
+  readonly name: string;
+  readonly description: string;
+  readonly status: string;
+  readonly last_sync_at?: string;
+}
+
+/**
+ * Lists reachable sources.
+ *
+ * The store filters rather than asserts, so a grant that excludes a source hides it instead of
+ * failing the whole call - failing would itself disclose that the source exists.
+ */
+export async function listSources(scope: Scope, store: SourceStore) {
+  const sources = await store.list(scope);
+  const projected: SourceInfo[] = sources.map((s) => ({
+    source_id: s.id,
+    kind: s.kind,
+    name: s.name,
+    description: s.description,
+    status: s.status,
+    ...(s.lastSyncAt === undefined ? {} : { last_sync_at: s.lastSyncAt }),
+  }));
+  // Source name/description are operator-set, not ingested, so they need no fence. The wrapper is
+  // kept for shape consistency across tools.
+  return { sources: projected };
 }

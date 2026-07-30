@@ -66,7 +66,11 @@ async function seeded() {
 }
 
 test('tool signatures are pinned — a rename breaks agent workflows silently', () => {
-  assert.deepEqual(Object.keys(TOOL_SCHEMAS), ['search_docs', 'get_doc']);
+  // Changing this list is changing a published interface. Update it deliberately, never to make a
+  // failing test pass — an agent's stored workflow breaks silently when a tool is renamed.
+  assert.deepEqual(Object.keys(TOOL_SCHEMAS), ['search_docs', 'get_doc', 'list_sources']);
+  assert.deepEqual(TOOL_SCHEMAS.list_sources.inputSchema.required, []);
+  assert.equal(TOOL_SCHEMAS.list_sources.inputSchema.additionalProperties, false);
   assert.deepEqual(TOOL_SCHEMAS.search_docs.inputSchema.required, ['query']);
   assert.deepEqual(TOOL_SCHEMAS.get_doc.inputSchema.required, ['doc_id']);
   assert.equal(TOOL_SCHEMAS.search_docs.inputSchema.additionalProperties, false);
