@@ -15,6 +15,7 @@ import pg from 'pg';
 import { localDevScope } from '@strata/auth';
 import {
   createDocStore,
+  createEventStore,
   createSourceStore,
   fromPoolLike,
   migrate,
@@ -71,6 +72,7 @@ await migrate(db);
 const scope = localDevScope({ workspaceId });
 const docs = createDocStore(db);
 const sources = createSourceStore(db);
+const events = createEventStore(db);
 
 await sources.upsert(scope, {
   id: sourceId,
@@ -98,6 +100,9 @@ const result = await persistIngest(
     now: new Date().toISOString(),
   }),
 );
+
+// Every event, including failures — storing only successes makes partial-sync bugs invisible.
+await events.append(scope, result.events);
 
 console.log(
   `\nnew ${result.counts.new}  changed ${result.counts.changed}  ` +

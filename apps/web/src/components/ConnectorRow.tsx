@@ -1,5 +1,4 @@
-import type { Source } from '@strata/core';
-import { sourceTint, statusColor, accent } from '@strata/tokens';
+import { sourceTint, statusColor, accent, type SourceKind } from '@strata/tokens';
 import styles from './ConnectorRow.module.css';
 
 /**
@@ -9,7 +8,7 @@ import styles from './ConnectorRow.module.css';
  * "GitHub" each collapse to one letter (`split(' ')` finds no space), and "Local Markdown" would
  * produce "LM", not "MD". Presentational only, so it lives here rather than on `Source`.
  */
-const INITIALS: Record<Source['kind'], string> = {
+const INITIALS: Record<SourceKind, string> = {
   claude: 'CL',
   cursor: 'CU',
   github: 'GH',
@@ -27,16 +26,25 @@ const INITIALS: Record<Source['kind'], string> = {
  * Connect/Upload into one label. `Connect`/`Upload`/`Connected` are visual endpoints only
  * (README:75-76) — no `onClick`.
  */
-export function ConnectorRow({ source }: { source: Source }) {
-  const tint = sourceTint[source.kind];
+/** The flat projection, not a domain `Source` — no `workspaceId` or `credentialRef` reaches a component. */
+export interface ConnectorInfo {
+  readonly kind: string;
+  readonly name: string;
+  readonly description: string;
+  readonly status: string;
+}
+
+export function ConnectorRow({ source }: { source: ConnectorInfo }) {
+  const kind = source.kind as SourceKind;
+  const tint = sourceTint[kind];
   const connected = source.status === 'connected';
-  const label = source.kind === 'markdown' ? 'Upload' : connected ? 'Connected' : 'Connect';
-  const color = connected && source.kind !== 'markdown' ? statusColor.connected : accent.default;
+  const label = kind === 'markdown' ? 'Upload' : connected ? 'Connected' : 'Connect';
+  const color = connected && kind !== 'markdown' ? statusColor.connected : accent.default;
 
   return (
     <div className={styles.row}>
       <div className={styles.icon} style={{ background: tint.iconBg, color: tint.iconFg }}>
-        {INITIALS[source.kind]}
+        {INITIALS[kind]}
       </div>
       <div className={styles.text}>
         <div className={styles.name}>{source.name}</div>

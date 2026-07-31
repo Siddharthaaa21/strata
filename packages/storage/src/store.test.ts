@@ -210,6 +210,25 @@ test('body matches rank below title matches (weight D vs A)', async () => {
   assert.equal(hits[0]?.id, 'doc-title', 'a title match must outrank a body match');
 });
 
+test('list browses everything in scope, newest first', async () => {
+  const { store } = await freshStore();
+  await store.upsert(scopeFor(WS_A), doc({ id: 'old' as DocId, externalId: 'o.md', updatedAt: '2026-01-01T00:00:00.000Z' }));
+  await store.upsert(scopeFor(WS_A), doc({ id: 'new' as DocId, externalId: 'n.md', updatedAt: '2026-07-01T00:00:00.000Z' }));
+  await store.upsert(scopeFor(WS_B), doc({ id: 'other' as DocId, externalId: 'x.md' }));
+
+  const listed = await store.list(scopeFor(WS_A));
+  assert.deepEqual(listed.map((d) => d.id), ['new', 'old'], 'recency order, and no cross-workspace rows');
+});
+
+test('list filters by folder and respects a narrowed Grant', async () => {
+  const { store } = await freshStore();
+  await store.upsert(scopeFor(WS_A), doc({ id: 'a' as DocId, externalId: 'a.md', folder: authored('Architecture') }));
+  await store.upsert(scopeFor(WS_A), doc({ id: 'b' as DocId, externalId: 'b.md', folder: authored('Incidents'), sourceId: SRC_GITHUB }));
+
+  assert.deepEqual((await store.list(scopeFor(WS_A), { folder: 'Incidents' })).map((d) => d.id), ['b']);
+  assert.deepEqual((await store.list(scopeFor(WS_A, [SRC_CLAUDE]))).map((d) => d.id), ['a']);
+});
+
 test('search results carry no body field', async () => {
   const { store } = await freshStore();
   await store.upsert(scopeFor(WS_A), doc());

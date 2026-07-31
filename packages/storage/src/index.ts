@@ -21,6 +21,7 @@ import {
 
 export * from './driver.ts';
 export * from './sources.ts';
+export * from './events.ts';
 
 /** Minimal driver surface. Satisfied by PGlite (tests) and node-postgres (production). */
 export interface SqlDriver {
@@ -75,6 +76,23 @@ CREATE TABLE IF NOT EXISTS sources (
   credential_ref text,
   PRIMARY KEY (workspace_id, id)
 );
+
+CREATE TABLE IF NOT EXISTS import_events (
+  workspace_id  text        NOT NULL,
+  id            text        NOT NULL,
+  source_id     text        NOT NULL,
+  doc_id        text,
+  status        text        NOT NULL,
+  error_code    text,
+  -- Sanitized by contract: a fixed per-code template, never a caught exception's message and never
+  -- document content. See ADR 0003.
+  error_message text,
+  occurred_at   timestamptz NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS import_events_recent
+  ON import_events (workspace_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS docs_fts ON docs USING GIN (search_vector);
 CREATE INDEX IF NOT EXISTS docs_scope ON docs (workspace_id, source_id) INCLUDE (updated_at);
@@ -149,6 +167,12 @@ export interface DocStore {
     externalId: string,
   ): Promise<{ readonly docId: DocId; readonly contentHash: string } | undefined>;
   search(scope: Scope, query: string, limit?: number): Promise<readonly DocSummary[]>;
+  /**
+   * Browsing, not searching: the Library shows everything in scope, newest first, with no query.
+   * Separate from `search` because ts_rank_cd over an empty query is meaningless — ordering here is
+   * recency, which is the only sensible default when the user has not asked for anything specific.
+   */
+  list(scope: Scope, options?: { readonly folder?: string; readonly limit?: number }): Promise<readonly DocSummary[]>;
   get(scope: Scope, id: DocId): Promise<Visible<Doc> & { readonly body: string }>;
 }
 
@@ -263,6 +287,47 @@ export function createDocStore(db: SqlDriver): DocStore {
         tags: r.tags,
         updatedAt: new Date(r.updated_at).toISOString(),
         rank: Number(r.rank),
+      }));
+    },
+
+    async list(scope, options = {}) {
+      const filter = scopeFilter(scope);
+      const capped = Math.max(1, Math.min(options.limit ?? MAX_RESULTS, MAX_RESULTS));
+      const sourceIds = filter.sourceIds;
+
+      const { rows } = await db.query<{
+        id: string;
+        source_id: string;
+        title: string;
+        excerpt: string;
+        folder: string;
+        tags: string[];
+        updated_at: Date | string;
+      }>(
+        `SELECT id, source_id, title, excerpt, folder, tags, updated_at
+           FROM docs
+          WHERE workspace_id = $1
+            AND ($2::text[] IS NULL OR source_id = ANY($2::text[]))
+            AND ($3::text IS NULL OR folder = $3::text)
+          ORDER BY updated_at DESC
+          LIMIT $4`,
+        [
+          filter.workspaceId,
+          sourceIds === undefined ? null : [...sourceIds],
+          options.folder ?? null,
+          capped,
+        ],
+      );
+
+      return rows.map((r) => ({
+        id: r.id as DocId,
+        sourceId: r.source_id as SourceId,
+        title: r.title,
+        excerpt: r.excerpt,
+        folder: r.folder,
+        tags: r.tags,
+        updatedAt: new Date(r.updated_at).toISOString(),
+        rank: 0,
       }));
     },
 

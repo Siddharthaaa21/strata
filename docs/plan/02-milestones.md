@@ -113,7 +113,10 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
       indistinguishable between out-of-scope and nonexistent.
 - [ ] Connect a live Postgres server — `fromPoolLike` adapter exists but is unverified against one;
       there is no Postgres in the dev environment yet
-- [ ] Screens wired to real persistence; fixtures retired
+- [x] Screens wired to real persistence; fixtures retired — all three read the live database via
+      `apps/web/src/lib/vault.ts`. Server Components reach the store; only a flat projection with
+      no `workspaceId` or `credentialRef` crosses to the client. `server-only` makes an accidental
+      client import a build error rather than a leaked connection string.
 - [ ] `strata-verifier` pass on every query path
 
 **Done when** the Library search box returns real ranked results.
