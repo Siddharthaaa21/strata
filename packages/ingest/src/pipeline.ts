@@ -61,6 +61,14 @@ export interface RunIngestInput {
   readonly lookup: KnownDocLookup;
   readonly newId?: IdFactory;
   readonly newEventId?: () => string;
+  /**
+   * Treats every document as changed, ignoring contentHash.
+   *
+   * The manual backfill path ADR 0003 names. Needed whenever the normalizer or the search vector
+   * changes: stored content is identical, so a normal run reports everything unchanged and the
+   * stale derivation is never corrected.
+   */
+  readonly reprocess?: boolean;
   /** ISO-8601 UTC. Injected so results are reproducible. */
   readonly now: string;
 }
@@ -96,7 +104,11 @@ export async function runIngest(input: RunIngestInput): Promise<IngestResult> {
 
     const known = await input.lookup(pending.sourceId, pending.externalId);
     const outcome: Outcome =
-      known === undefined ? 'new' : known.contentHash === pending.contentHash ? 'unchanged' : 'changed';
+      known === undefined
+        ? 'new'
+        : input.reprocess || known.contentHash !== pending.contentHash
+          ? 'changed'
+          : 'unchanged';
 
     const docId = known?.docId ?? mintDocId();
     decisions.push({ outcome, docId, pending });

@@ -166,6 +166,50 @@ test('authored tags outrank model-guessed tags (ADR 0004 weighting)', async () =
   );
 });
 
+test('a term that appears ONLY in the body is findable', async () => {
+  // Regression: search_vector originally indexed title/tags/excerpt/folder but never the body,
+  // so a knowledge base could not find text inside its own documents. Every earlier test passed
+  // because its search terms happened to be in the title. Caught only by real data.
+  const { store } = await freshStore();
+  await store.upsert(
+    scopeFor(WS_A),
+    doc({
+      title: 'Unrelated Heading',
+      excerpt: authored('also unrelated'),
+      folder: authored('misc'),
+      tags: authored([]),
+      body: 'The distinguishing word here is chrysanthemum, and it appears nowhere else.',
+    }),
+  );
+
+  const hits = await store.search(scopeFor(WS_A), 'chrysanthemum');
+  assert.equal(hits.length, 1, 'document bodies must be searchable');
+  assert.equal(hits[0]?.title, 'Unrelated Heading');
+});
+
+test('body matches rank below title matches (weight D vs A)', async () => {
+  const { store } = await freshStore();
+  await store.upsert(
+    scopeFor(WS_A),
+    doc({ id: 'doc-title' as DocId, externalId: 't.md', title: 'Kubernetes', body: 'unrelated' }),
+  );
+  await store.upsert(
+    scopeFor(WS_A),
+    doc({
+      id: 'doc-body' as DocId,
+      externalId: 'b.md',
+      title: 'Unrelated',
+      excerpt: authored(''),
+      tags: authored([]),
+      body: 'This mentions kubernetes only in the body text.',
+    }),
+  );
+
+  const hits = await store.search(scopeFor(WS_A), 'kubernetes');
+  assert.equal(hits.length, 2);
+  assert.equal(hits[0]?.id, 'doc-title', 'a title match must outrank a body match');
+});
+
 test('search results carry no body field', async () => {
   const { store } = await freshStore();
   await store.upsert(scopeFor(WS_A), doc());

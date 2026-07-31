@@ -87,6 +87,8 @@ export async function migrate(db: SqlDriver): Promise<void> {
 /**
  * The A/B/C/D weighting from ADR 0004.
  *
+ * Weight D carries both model-provenance tags and the document body.
+ *
  * `Doc.tags` is `Derived<readonly string[]>` — one provenance for the whole array, not per tag.
  * So the B-vs-D split is per-document: a doc whose tags were authored gets all of them at B, a doc
  * whose tags were guessed gets all of them at D. If tags ever become individually provenanced, this
@@ -100,7 +102,8 @@ const SEARCH_VECTOR = `
     CASE WHEN $13::text IN ('user','source') THEN array_to_string($12::text[], ' ') ELSE '' END), 'B') ||
   setweight(to_tsvector('english', coalesce($8::text, '') || ' ' || coalesce($10::text, '')), 'C') ||
   setweight(to_tsvector('english',
-    CASE WHEN $13::text IN ('user','source') THEN '' ELSE array_to_string($12::text[], ' ') END), 'D')
+    CASE WHEN $13::text IN ('user','source') THEN '' ELSE array_to_string($12::text[], ' ') END), 'D') ||
+  setweight(to_tsvector('english', coalesce($16::text, '')), 'D')
 `;
 
 export interface UpsertDocInput {
@@ -192,6 +195,9 @@ export function createDocStore(db: SqlDriver): DocStore {
           input.tags.provenance,
           input.createdAt,
           input.updatedAt,
+          // $16 — body, used ONLY to build search_vector at weight D. The body column stays in
+          // doc_bodies and is still never selected by search, so metadata-first retrieval holds.
+          input.body,
         ],
       );
 
