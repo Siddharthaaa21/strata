@@ -21,7 +21,8 @@
     "scan": "node scripts/nul-scan.mjs",
     "db:setup": "node scripts/db-setup.mjs",
     "ingest": "node scripts/ingest.mjs",
-    "search": "node scripts/search.mjs"
+    "search": "node scripts/search.mjs",
+    "mcp:smoke": "node scripts/mcp-smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

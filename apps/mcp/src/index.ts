@@ -14,6 +14,8 @@
  * Replacing this with a per-connection authenticated principal is the M7 Agent Access work.
  */
 
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { localDevScope } from '@strata/auth';
@@ -22,9 +24,14 @@ import {
   createDocStore,
   createSourceStore,
   fromPoolLike,
+  loadDotEnv,
   requireConnectionString,
 } from '@strata/storage';
 import { createStrataServer } from './server.ts';
+
+// An MCP client launches this process with a minimal environment, so the repo's .env is the only
+// place credentials can come from. This is why the client config needs no secrets in it.
+loadDotEnv(resolve(dirname(fileURLToPath(import.meta.url)), '../../..'));
 
 const connectionString = requireConnectionString(process.env);
 

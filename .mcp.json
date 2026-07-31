@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "strata": {
+      "command": "node",
+      "args": ["apps/mcp/src/index.ts"]
+    }
+  }
+}

@@ -19,6 +19,9 @@
  * ADR 0004 explicitly left open.
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { SqlDriver } from './index.ts';
 
 /** The shape every Postgres client library already has. */
@@ -62,4 +65,34 @@ export function requireConnectionString(env: Record<string, string | undefined>)
     );
   }
   return url;
+}
+
+/**
+ * Loads `.env` from a directory into `process.env`, without overwriting anything already set.
+ *
+ * Deliberately shared: the MCP server, the web app, and three CLI scripts all need the same file,
+ * and five hand-rolled parsers is five chances to disagree about quoting. Existing environment
+ * variables always win, so a platform-supplied value is never clobbered by a stale local file.
+ *
+ * Not a full dotenv implementation — no interpolation, no multiline values. If this repo ever needs
+ * those, take the dependency rather than growing this.
+ */
+export function loadDotEnv(dir: string, env: Record<string, string | undefined> = process.env): void {
+  let raw: string;
+  try {
+    raw = readFileSync(join(dir, '.env'), 'utf8');
+  } catch (e) {
+    // A missing file is normal — the platform may supply the environment instead. Anything else
+    // is a real failure and must surface: a blanket catch here previously swallowed a genuine
+    // module error and presented it as "no .env", which is a much harder bug to find.
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw e;
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i.exec(line);
+    if (!match) continue;
+    const key = match[1];
+    if (key === undefined || env[key] !== undefined) continue;
+    env[key] = (match[2] ?? '').trim().replace(/^["']|["']$/g, '');
+  }
 }

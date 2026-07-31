@@ -89,3 +89,55 @@ That is fine for a local single-user vault. It is **not** acceptable for anythin
 Real per-connection principals are M7 (see R7 in the risk register). Do not deploy this to a shared
 environment on the assumption that the tenancy model protects you — the tenancy model is sound, but
 nothing authenticates the caller yet.
+
+---
+
+## Connecting an agent to the vault
+
+The MCP server is read-only: `search_docs`, `get_doc`, `list_sources`. It reads `DATABASE_URL` and
+`STRATA_WORKSPACE_ID` from the repo's `.env` itself, so **no client config contains a secret**.
+
+Verify it works before wiring any client:
+
+```bash
+npm run mcp:smoke
+```
+
+That spawns the real server as a subprocess and drives it with a real MCP client over stdio —
+process spawn, env loading, pool creation, stdio framing, shutdown. The in-repo tests use an
+in-memory transport and prove the handlers; this proves the entrypoint.
+
+### Claude Code
+
+`.mcp.json` at the repo root already declares it. Claude Code picks up project-scoped servers
+automatically and will ask for approval the first time. Nothing else to do.
+
+### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) and merge in:
+
+```json
+{
+  "mcpServers": {
+    "strata": {
+      "command": "node",
+      "args": ["/absolute/path/to/design_handoff_strata_workspace/apps/mcp/src/index.ts"]
+    }
+  }
+}
+```
+
+Absolute paths are required — Claude Desktop does not launch from the repo. Restart the app after
+editing.
+
+### What an agent can and cannot do
+
+Can: search the vault, read one document at a time, list connected sources.
+
+Cannot: write, delete, trigger a sync, or reach another workspace. There are no mutating tools
+(D5), and every tool re-checks scope itself.
+
+**One caveat worth stating plainly.** There is no authentication (R7/M7). Anything able to start
+this process gets the workspace named in `.env`. That is fine for a local vault on your own
+machine; do not expose this server over a network on the assumption that tenancy protects you —
+tenancy is sound, but nothing authenticates the caller yet.

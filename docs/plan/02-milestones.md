@@ -159,6 +159,8 @@ stand-in for a real one.
 - [x] Transport wiring (MCP SDK) — `apps/mcp/src/server.ts` plus a stdio entrypoint. Proven by an
       end-to-end test in which a real SDK `Client` drives the real server over a linked in-memory
       transport against real Postgres (PGlite): 8 tests
+- [x] Verified against a live database — `npm run mcp:smoke` spawns the real server and drives it
+      with a real MCP client over stdio. `.mcp.json` wires it into Claude Code with no secrets.
 - [ ] `packages/auth` is a development stub — `localDevScope` is not authentication. Real
       per-connection principals are M7 (R7)
 - [x] Red-team pass on injection — 9 hostile documents through the real route (`injection.test.ts`)
