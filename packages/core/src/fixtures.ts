@@ -11,7 +11,7 @@
  * fixture workspace — there is no cross-workspace scoping to exercise here, since fixtures have
  * no query/store layer for a `Scope` to be checked against (decision log D8 still covers that gap).
  */
-import type { BodyRef, Derived, Doc, DocId, ImportEvent, Source, SourceId, WorkspaceId } from './index';
+import type { BodyRef, Derived, Doc, DocId, ImportEvent, Source, SourceId, WorkspaceId } from './index.ts';
 
 const workspaceId = 'ws-fixture' as WorkspaceId;
 

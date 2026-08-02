@@ -49,3 +49,8 @@ export interface IngestOutcome {
   readonly succeeded: number;
   readonly failures: readonly { readonly externalId: string; readonly code: string }[];
 }
+
+export * from './fs-port.ts';
+export * from './markdown.ts';
+export * from './pipeline.ts';
+export * from './persist.ts';

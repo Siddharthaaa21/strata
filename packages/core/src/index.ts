@@ -256,4 +256,5 @@ export function docIdentityKey(identity: DocIdentity): string {
  * Fixture data for fixture-driven UI (D8). Re-exported from the package entry so screens never
  * import `./fixtures` directly by relative path -- `@strata/core` is the only import surface.
  */
-export * from "./fixtures";
+export * from "./untrusted.ts";
+export * from "./fixtures.ts";

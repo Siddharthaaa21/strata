@@ -1,25 +1,40 @@
-import { docs, importEvents, sources, type Doc, type DocId, type ImportEvent } from '@strata/core';
 import { ConnectorRow } from './ConnectorRow';
 import { relativeTime } from '../lib/relative-time';
+import { loadImport } from '../lib/vault';
 import styles from './ImportScreen.module.css';
 
 /**
  * screen-import — design/handoff/README.md:20-25, Vault.dc.html:114-146.
  *
- * Single column, 840px max: header → connector list → "Recent imports". The recent-imports list
- * is deliberately flat (no card, no status pill, no source badge — README:24) and only shows
- * `ImportEvent`s whose `docId` resolves to a fixture `Doc`: `imported`/`updated`/`skipped-duplicate`
- * always have one, `failed` (the GitHub-disconnected fixture) does not. Surfacing a failed row in
- * a list with no status indicator would silently read as a success, so it's excluded — see
- * strata-ui-builder DEVIATIONS.
+ * A Server Component reading real sources and real ImportEvents. Single column, 840px max:
+ * header → connector list → "Recent imports", the last deliberately flat (no card, no status pill,
+ * no source badge — README:24).
+ *
+ * Connectors that have never been connected are not in the database, so the four the handoff shows
+ * are merged in as not-connected placeholders. That keeps the screen honest: it advertises what
+ * Strata could connect to, while only reporting real status for what actually exists.
  */
-export function ImportScreen() {
-  const docsById = new Map<DocId, Doc>(docs.map((doc) => [doc.id, doc]));
+const PLACEHOLDER_CONNECTORS = [
+  { id: 'src-claude', kind: 'claude', name: 'Claude', description: 'Syncs research threads and project docs.' },
+  { id: 'src-cursor', kind: 'cursor', name: 'Cursor', description: 'Pulls implementation plans from your repos.' },
+  { id: 'src-github', kind: 'github', name: 'GitHub', description: 'Indexes READMEs, ADRs, and PR descriptions.' },
+  { id: 'src-markdown', kind: 'markdown', name: 'Local Markdown', description: 'Drag in .md files or folders from anywhere.' },
+] as const;
 
-  const recentImports = importEvents
-    .map((event) => (event.docId ? { event, doc: docsById.get(event.docId) } : null))
-    .filter((row): row is { event: ImportEvent; doc: Doc } => row !== null && row.doc !== undefined)
-    .sort((a, b) => new Date(b.event.occurredAt).getTime() - new Date(a.event.occurredAt).getTime());
+export async function ImportScreen() {
+  const { sources, recent } = await loadImport();
+  const bySourceId = new Map(sources.map((s) => [s.id, s]));
+
+  const connectors = PLACEHOLDER_CONNECTORS.map((c) => {
+    const live = bySourceId.get(c.id);
+    return {
+      id: c.id,
+      kind: c.kind,
+      name: live?.name ?? c.name,
+      description: live?.description ?? c.description,
+      status: live?.status ?? 'disconnected',
+    };
+  });
 
   return (
     <div className={styles.screen}>
@@ -32,20 +47,26 @@ export function ImportScreen() {
       </div>
 
       <div className={styles.connectorList}>
-        {sources.map((source) => (
-          <ConnectorRow key={source.id} source={source} />
+        {connectors.map((c) => (
+          <ConnectorRow key={c.id} source={c} />
         ))}
       </div>
 
       <div>
-        <div className={styles.sectionLabel}>Recent imports</div>
+        <h2 className={styles.sectionLabel}>Recent imports</h2>
         <div className={styles.recentList}>
-          {recentImports.map(({ event, doc }) => (
-            <div key={event.id} className={styles.recentRow}>
-              <div className={styles.recentTitle}>{doc.title}</div>
-              <span className={styles.recentTime}>{relativeTime(event.occurredAt)}</span>
+          {recent.length === 0 ? (
+            <div className={styles.recentRow}>
+              <div className={styles.recentTitle}>Nothing imported yet.</div>
             </div>
-          ))}
+          ) : (
+            recent.map((r) => (
+              <div key={r.id} className={styles.recentRow}>
+                <div className={styles.recentTitle}>{r.title}</div>
+                <span className={styles.recentTime}>{relativeTime(r.occurredAt)}</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

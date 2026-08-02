@@ -18,11 +18,17 @@
     "test": "node --test",
     "graph": "node scripts/graph.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run graph -- --check && npm run scan",
-    "scan": "node scripts/nul-scan.mjs"
+    "scan": "node scripts/nul-scan.mjs",
+    "db:setup": "node scripts/db-setup.mjs",
+    "ingest": "node scripts/ingest.mjs",
+    "search": "node scripts/search.mjs",
+    "mcp:smoke": "node scripts/mcp-smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.20.0",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.2.12",
     "globals": "^15.15.0",

@@ -2,16 +2,25 @@
 id: svc-storage
 kind: service
 title: Storage
-status: planned
+status: in-progress
 owner: core
-spec: docs/plan/04-risk-register.md
-depends_on: [contract-doc, dec-tenancy, contract-scope, dec-storage-search]
+spec: docs/adr/0004-storage-and-search.md
+depends_on: [contract-doc, dec-tenancy, contract-scope, dec-storage-search, guarantee-storage-atomicity]
 ---
 
-Where docs live. Undecided. The choice is coupled to search: full-text ranking and vector
-similarity have very different storage implications, and picking storage first without deciding
-retrieval is how you end up with a second system six weeks later.
+PostgreSQL, decided with search in one pass (dec-storage-search). Implemented in packages/storage:
+schema, scope-filtered ranked query, and an upsert that is now ONE data-modifying CTE writing docs
+and doc_bodies together (M4 fix). It was two unwrapped queries, so a crash between them left a
+permanently bodyless document that was searchable but unreadable, and that a retry reported as
+unchanged and never repaired. The guarantee-storage-atomicity node describes this property. Honors
+ADR 0003's provisional-id rule — on conflict the stored id wins, so a retry after a mid-persist
+crash converges instead of double-writing. Also: credential_ref now updates through COALESCE, so
+an upsert omitting it cannot erase a stored credential (M4 fix).
 
-Tenancy (`dec-tenancy`) is resolved, so this is no longer blocked by an open scope decision — every
-store read still must take a `Scope` and apply `scopeFilter` (ADR 0002); that is now an
-implementation requirement, not an open unknown.
+Tested against real Postgres 18 via PGlite (WASM, in-process) — the SQL under test is the SQL that
+ships. Still open: connecting a live server (no Postgres in the dev environment yet) and retiring
+the fixtures the screens currently read from.
+
+Also backs list_sources: a sources table carrying its own workspaceId, since Source is returned
+independently of any Doc and joining through docs would leak every connected account in a workspace
+with no documents.

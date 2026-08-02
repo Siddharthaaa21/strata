@@ -32,7 +32,11 @@ they are closed.
 - [x] **Resolve `risk-tenancy`** — user / team / workspace scoping. Routed to `strata-architect`;
       closed by `docs/adr/0002-tenancy-workspace-scope.md` (decision log D9). Workspace-scoped,
       residency separated from capability.
-- [ ] **Resolve `risk-injection`** — the fencing strategy for ingested content served over MCP.
+- [x] **Resolve `risk-injection`** — design closed by ADR 0005 / D12 and implemented in
+      `packages/core/src/untrusted.ts` (12 tests). `Untrusted<T>` types every ingested-derived
+      string; bodies get a nonce-delimited envelope; search metadata is fenced structurally as JSON
+      with one preamble, closing the gap D10 surfaced. Verification (red-team + `strata-verifier`)
+      is M6 work — R2 stays open in the register until then.
 - [x] `packages/core` — `Doc`, `Source`, `ImportEvent` committed, with provenance tracking and
       `workspaceId` per ADR 0002
 - [x] ADR for `risk-tenancy` (0002) — `risk-injection` still needs its own ADR when it closes
@@ -96,17 +100,41 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
 
 ## M4 — Storage, search, and real data
 
-- [ ] `svc-storage` decision + implementation. Constraint from ADR 0003 (M5's ingest design,
+- [x] `svc-storage` decision + implementation. Constraint from ADR 0003 (M5's ingest design,
       built ahead of this milestone per D10): persist must upsert on
       `(workspaceId, sourceId, externalId)` and treat the `DocId` ingestion mints as a proposal,
-      not an assertion — a crash mid-persist plus a retry must not double-write.
+      not an assertion — a crash mid-persist plus a retry must not double-write. Both properties
+      held for the *row* and initially failed for the *pair*: `upsert` wrote `docs` and
+      `doc_bodies` as two unwrapped statements, and the returned canonical id was discarded by
+      `persistDecisions`. Both fixed 2026-08-02 (single data-modifying CTE; `reconciled` map).
 - [x] `svc-search` — **designed** (ADR 0004 / D11): ranking weighted for the agent case,
       provenance-weighted tags, recency as tiebreaker only. Implementation still open below.
-- [ ] Implement the schema, upsert, and ranked query from ADR 0004
-- [ ] Screens wired to real persistence; fixtures retired
-- [ ] `strata-verifier` pass on every query path
+- [x] Implement the schema, upsert, and ranked query from ADR 0004 — `packages/storage`, 13 tests
+      against real Postgres 18 (PGlite, in-process). Covers: existing-id-wins on re-import, no
+      cross-workspace leak, Grant `sourceIds` narrowing (and empty-array = deny-all), authored tags
+      outranking model tags, no body in search results, limit clamped, and `NotFound` being
+      indistinguishable between out-of-scope and nonexistent.
+- [x] Connect a live Postgres server — Supabase (PostgreSQL 17.6, pooler port 6543). `fromPoolLike`
+      is verified against it by `npm run db:setup` and by all three screens reading live data.
+- [x] Screens wired to real persistence; fixtures retired — all three read the live database via
+      `apps/web/src/lib/vault.ts`. Server Components reach the store; only a flat projection with
+      no `workspaceId` or `credentialRef` crosses to the client. `server-only` makes an accidental
+      client import a build error rather than a leaked connection string.
+- [x] `strata-verifier` pass on every query path — ran 2026-08-02. Every SQL statement enumerated
+      individually; workspace scoping is a `WHERE` clause everywhere, never a post-filter, and the
+      boundary survived three independent attempts to break it. Found and fixed: non-atomic
+      `upsert`, `credential_ref` erased by an omitting upsert, discarded canonical `DocId`.
+      Found and **left open**: `Grant.sourceIds` is applied by `search`/`list`/`get` but not by
+      `findKnown`/`upsert`/`events.recent`. Not exploitable today — nothing mints a narrowed grant —
+      but it must be complete before M7 issues the first one. Tracked in R2's open list.
 
-**Done when** the Library search box returns real ranked results.
+**Done when** the Library search box returns real ranked results. — **Met.**
+
+Carried out of M4: `docs.list` clamps to `MAX_RESULTS` (50), which is correct as an anti-exfiltration
+ceiling for an agent and wrong as a page size for a human. The Library shows at most 50 documents,
+reports that count as the vault size, and derives its folder pills from the same 50 — so a folder
+whose documents are all older than the 50th disappears from the UI. Needs pagination, which is a
+design question the handoff does not answer.
 
 ---
 
@@ -119,9 +147,13 @@ the same shape of exception D8 made for fixture-driven screens ahead of `risk-te
 still waits on M4: actually persisting a normalized doc and retiring the in-memory `PriorIndex`
 stand-in for a real one.
 
-- [ ] Local Markdown adapter first — no OAuth, exercises the whole pipeline end to end. Design
+- [x] Local Markdown adapter — `packages/ingest`, 20 tests against an injected filesystem port.
+      Identity, canonicalization, derivation, dedupe, and `ImportEvent` emission all per ADR 0003.
+      Persist is the one stage still missing; it needs `svc-storage` wiring (below). Design
       done: `docs/adr/0003-ingest-identity.md`. Build in progress.
-- [ ] Normalizer, dedupe, `ImportEvent` emission including failures — designed in ADR 0003
+- [x] Normalizer, dedupe, `ImportEvent` emission including failures — designed in ADR 0003
+- [x] Wire the adapter to `packages/storage` persist — `persist.ts`, plus a 7-test end-to-end
+      suite covering the whole loop: files -> scan -> dedupe -> persist -> ranked search
 - [ ] Claude and Cursor adapters
 - [ ] GitHub adapter — ships **not connected** by default
 - [ ] Fixture-based tests per adapter; no live network in tests — ADR 0003 specifies an injected
@@ -133,13 +165,35 @@ stand-in for a real one.
 
 ## M6 — MCP surface
 
-- [ ] `search_docs`, `get_doc`, `list_sources` — read-only
-- [ ] Scope re-checked inside every tool, not in middleware
-- [ ] Content fenced as data on every response
-- [ ] `strata-verifier` pass focused on tenancy leaks and injection
-- [ ] Tool signatures pinned by a schema test
+- [x] `search_docs`, `get_doc`, `list_sources` — read-only handlers in `apps/mcp/src/tools.ts`
+- [x] `sources` table in `packages/storage`, carrying its own `workspaceId`
+- [x] Scope re-checked inside every tool, not in middleware
+- [x] Content fenced as data on every response — nonce envelope for bodies, structural JSON for
+      search metadata (ADR 0005)
+- [x] Tool signatures pinned by a schema test — including that no mutating tool exists (D5)
+- [x] Transport wiring (MCP SDK) — `apps/mcp/src/server.ts` plus a stdio entrypoint. Proven by an
+      end-to-end test in which a real SDK `Client` drives the real server over a linked in-memory
+      transport against real Postgres (PGlite): 8 tests
+- [x] Verified against a live database — `npm run mcp:smoke` spawns the real server and drives it
+      with a real MCP client over stdio. `.mcp.json` wires it into Claude Code with no secrets.
+- [ ] `packages/auth` is a development stub — `localDevScope` is not authentication. Real
+      per-connection principals are M7 (R7)
+- [x] Red-team pass on injection — 9 hostile documents through the real route (`injection.test.ts`)
+- [x] `strata-verifier` pass focused on tenancy leaks and injection — ran 2026-08-02, three
+      independent passes, none told what the defenses were. All three returned **do-not-ship**, and
+      they were right: `get_doc` was returning `title`/`folder`/`tags` unfenced above the only
+      preamble in the response — a live injection channel — plus two normalization gaps (Unicode
+      Tag block, `U+2028`) that let a document show one thing to the Library and another to an
+      agent. Fixed, each with a regression test confirmed to fail against the old code. Full
+      finding list and what the review *cleared* is in R2.
+- [ ] Re-verify the fixes independently — this is what now closes R2. The fixes were written by the
+      person who read the findings, which is the same authorship problem that produced the original
+      defects. Not a formality.
 
 **Done when** a real MCP client can search and read the vault, and the verifier says ship.
+
+Not done: the verifier does not say ship yet. It said do-not-ship, the defects are fixed, and the
+re-verification has not run.
 
 ---
 

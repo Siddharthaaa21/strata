@@ -1,25 +1,67 @@
+#!/usr/bin/env node
 /**
- * Strata MCP server — how agents read the vault.
+ * Strata MCP server — stdio entrypoint.
  *
- * STATUS: not implemented (milestone M6). BLOCKED on risk-tenancy and risk-injection.
- * Read .claude/skills/mcp-surface/SKILL.md before adding anything here.
+ * Read-only by decision (D5): search_docs, get_doc, list_sources. The tool surface and its
+ * security properties live in ./tools.ts; ./server.ts is the SDK wiring. This file does nothing but
+ * connect a real database and a stdio transport.
  *
- * The surface is read-only by decision (docs/plan/05-decision-log.md D5). Adding tools later is
- * additive and safe; removing them breaks agent workflows silently.
+ * Run:  DATABASE_URL=... STRATA_WORKSPACE_ID=... node apps/mcp/src/index.ts
  *
- * Non-negotiable properties of every tool added here:
- *   1. It re-checks caller scope ITSELF. Not in middleware, not in the caller.
- *   2. It returns document content fenced as data, never as prose the model may read as
- *      instruction.
- *   3. "not found" and "not permitted" are indistinguishable to the caller — otherwise the error
- *      channel is an enumeration oracle over document ids.
- *   4. Its description contains no interpolated ingested content.
+ * TEMPORARY — the scope below is a single fixed workspace read from STRATA_WORKSPACE_ID. There is
+ * no authentication yet (R7 / M7): anything that can start this process gets that workspace. That
+ * is acceptable for local single-user use and is NOT acceptable for a shared or hosted deployment.
+ * Replacing this with a per-connection authenticated principal is the M7 Agent Access work.
  */
 
-export const PLANNED_TOOLS = [
-  'search_docs', // (query, filters?, limit?) -> metadata + excerpt. Never bodies.
-  'get_doc', // (doc_id) -> body + metadata. Re-checks scope. Fenced.
-  'list_sources', // () -> connected sources. Never credentials.
-] as const;
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { localDevScope } from '@strata/auth';
+import type { WorkspaceId } from '@strata/core';
+import {
+  createDocStore,
+  createSourceStore,
+  fromPoolLike,
+  loadDotEnv,
+  requireConnectionString,
+} from '@strata/storage';
+import { createStrataServer } from './server.ts';
 
-export type PlannedTool = (typeof PLANNED_TOOLS)[number];
+// An MCP client launches this process with a minimal environment, so the repo's .env is the only
+// place credentials can come from. This is why the client config needs no secrets in it.
+loadDotEnv(resolve(dirname(fileURLToPath(import.meta.url)), '../../..'));
+
+const connectionString = requireConnectionString(process.env);
+
+const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId | undefined;
+if (!workspaceId) {
+  throw new Error(
+    'STRATA_WORKSPACE_ID is not set. There is no default: a server that silently picks a ' +
+      'workspace is a server that silently serves the wrong one.',
+  );
+}
+
+const pool = new pg.Pool({ connectionString, max: 4 });
+const db = fromPoolLike(pool);
+
+const server = createStrataServer({
+  docs: createDocStore(db),
+  sources: createSourceStore(db),
+  // Re-resolved per call rather than captured, so this becomes a real auth lookup in M7 without
+  // changing the server. A cached Scope is a Grant revocation that never takes effect.
+  scope: () => localDevScope({ workspaceId }),
+});
+
+await server.connect(new StdioServerTransport());
+
+// stdout is the MCP transport. Anything written there that is not a protocol message corrupts the
+// stream, so diagnostics go to stderr.
+process.stderr.write('strata mcp server ready (read-only)\n');
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    void pool.end().finally(() => process.exit(0));
+  });
+}

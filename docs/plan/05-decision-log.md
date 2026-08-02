@@ -239,3 +239,126 @@ starts if a second opinion is wanted on the ranking weights.
 **Reversible?** The store and the ranking weights, yes — pgvector is additive, reweighting is a
 reindex. The `(workspace_id, source_id, external_id)` uniqueness constraint is not, but that is
 inherited from ADR 0003 rather than chosen here.
+
+---
+### D12 — Untrusted content is a type, fenced per channel
+**2026-07-29** · architecture · closes R2's design half · ADR: `docs/adr/0005-untrusted-content.md`
+
+Every string derived from ingested content is `Untrusted<T>`, discharged only by `fence()` or
+`forDisplay()`. Typed rather than checked at the MCP boundary because the boundary moves: a
+summarizer, related-docs, or "Ask agent about this" would each silently bypass a boundary check,
+and nothing would fail to compile. Same witness pattern as `Visible<T>`, same `as` bypass, same
+`no-restricted-syntax` backstop — verified by planting a cast and confirming the rule fires.
+
+Fencing depends on the channel. Bodies get a nonce-delimited envelope; the nonce is random per
+response, never derived from content, and stripped from the content before wrapping, so a document
+cannot close its own fence. Search metadata is fenced *structurally* — JSON string values under
+labelled keys, with one preamble per response — which closes the gap D10 surfaced: a document
+*titled* as an instruction was not covered by "fence the returned content as data". Per-field
+warnings were rejected: cost scales with result count and repetition teaches a model to skip them.
+
+Ingest normalization strips bidi overrides, zero-width characters, and C0/C1 controls. This is not
+injection prevention and is not claimed to be — it stops an injection being *invisible* to the human
+reviewing the Library, since bidi controls reorder rendered text without changing the bytes a model
+reads.
+
+Rejected: LLM-based injection classification (a model call per doc, itself injectable, and pulls a
+model dependency into ingest that D10 kept out); stripping suspicious phrasing at ingest (unbounded
+and lossy — "ignore previous instructions" is legitimate content in a document *about* injection,
+which this corpus will contain); a fixed delimiter (content can close it early).
+
+Honest limit, recorded rather than glossed: this reduces likelihood and blast radius, it does not
+eliminate injection. Any design that serves text to a model is injectable in principle, and nothing
+here has yet been tested against a real attempt. R2 stays open in the register until a red-team pass
+and a `strata-verifier` sign-off in M6.
+
+**Reversible?** Yes at the type level — additive, no stored data or schema change, no MCP signature
+change (the tools do not exist yet). The standing cost is deliberate friction: every future consumer
+of `Doc` must discharge `Untrusted<T>` explicitly.
+
+---
+
+## D13 — Fence enforcement is a chokepoint and a test, not a type · 2026-08-02
+
+**Context.** Three independent `strata-verifier` passes ran against the MCP surface, storage, and
+ingest. Each was given the target and an adversarial mandate; none was told what the defenses were
+or how they were meant to work. All three returned **do-not-ship**. Two of them independently found
+the same top defect without seeing each other's work: `get_doc` returned `title`, `folder`, and
+`tags` straight from ingested content, with no preamble and no `untrustedFields` declaration, while
+the single warning in the response sat *below* them inside the body envelope reading "the content
+below". Frontmatter `title:` accepts a multi-line YAML block scalar, so that was unbounded
+attacker-controlled prose reaching an agent as the first thing in the payload.
+
+**Decision.** The response-construction chokepoint (`fenceResults`, `fenceDoc`) plus
+`apps/mcp/src/fencing.test.ts` is the enforcement. `Untrusted<T>` stays, demoted to documentation.
+
+**Why the type could not have caught this, which is the part worth remembering.** `Untrusted<T>` is
+`T & {witness}` and is therefore **assignable to `T`**. A handler that never discharges the marker
+compiles cleanly. The `no-restricted-syntax` rule bans *constructing* the witness — it catches
+"someone invented untrusted data from nothing" and cannot catch "someone returned untrusted data
+without fencing it", which is the failure that actually shipped. The marker additionally does not
+survive the storage round trip: `Doc.title` is a plain `string` in `packages/core`, so the store
+returns unmarked values no matter what ingest produced. D12 and ADR 0005 section 1 claimed "a type
+follows the value into all of them." That claim was wrong, and believing it is why nobody wrote the
+test. ADR 0005 now carries the correction inline rather than a quiet edit.
+
+**Why the test is written inside-out.** Not "assert `get_doc` fences its title" — that is another
+per-field test, and per-field tests only cover fields somebody thought to name. Instead: plant a
+distinct marker in every content-derived input, serialize the real response from a real MCP client,
+and demand that *every* occurrence of *any* marker lands either in a field named by
+`untrustedFields` or inside the nonce envelope. A future tool returning a new ingested field fails
+without anyone remembering to add a case. The old `get_doc` test asserted on `content` alone and
+passed for the wrong reason — it proved the body was fenced and was silent about four sibling keys.
+
+**Method note, and the actual reusable lesson.** The red-team suite that missed all of this was
+thorough and adversarial; its author simply could not step outside their own model of the threat. It
+tested the hiding techniques it knew (RLO, zero-width) and stopped at the edge of that list, missing
+the Unicode Tag block. It never considered `U+2028`, which requires knowing a `JSON.stringify`
+serialization detail rather than a Unicode one — a different domain from the rest of the defense.
+Independent review is not a rubber stamp on this codebase; it is where the defects were. Every fix
+here was written by the person who read the findings, which reproduces the same authorship problem
+one level up, so R2 does not close until the fixes are themselves independently re-verified.
+
+**Reversible?** The test is additive. The `fenceDoc` payload adds two keys to `get_doc` output
+(`notice`, `untrustedFields`) ahead of the existing ones — an additive wire change, and the output
+shape was never pinned. Removing it would reopen the hole, so treat it as one-way.
+
+---
+
+## D14 — Enumerate the property, not the attacks · 2026-08-02
+
+**Context.** D13's fixes were re-reviewed the same day by two further independent passes. Both
+returned do-not-ship. Two of the four fixes did not do what D13, ADR 0005, the risk register, the
+commit message, and the context graph all claimed. Specifics are in R2; the pattern is the point.
+
+**What went wrong, in one line each.** The fencing guard was written against the two tools that
+existed, so a reviewer added a third and the suite passed 5/5. The excerpt cap was applied to the
+field named "excerpt", so `title`, `folder`, and `tags` stayed unbounded and produced a 3.2 MB
+`search_docs` response. The stripped-character set was extended with the carrier round one found,
+so round two used the carrier 129 codepoints above it.
+
+**Decision.** Where a defense enumerates, it must enumerate the *property* or the *live surface*,
+never the instances known at authoring time.
+
+- Stripped characters: the rule is "nothing default-ignorable survives ingest", not a list of
+  carriers. A carrier is added only when the property already covered it and the range was wrong.
+- Fencing: the guard calls `tools/list` and derives arguments from each tool's own `inputSchema`.
+  It tests the surface the server advertises, not the surface the test author remembered.
+- Bounds: every metadata channel that crosses the wire is capped, not the one that sounds like it
+  carries prose.
+
+**Why this is a decision and not just a bug fix.** All three round-one fixes were locally correct.
+Each closed the exact defect reported. They failed because a defect report is a *sample* of a class,
+and treating it as the class is how a security fix becomes a security theatre. The generalization
+step is not optional polish — it is the fix.
+
+**The method finding, which is the expensive one.** Round one's claims were asserted in five places
+and tested in none. "A future tool that forgets will fail here" was written into a commit message,
+an ADR, the risk register, this log, and a graph node without anyone adding a future tool to check.
+A claim about what a test *would* catch is itself testable, and now is: the leaking-tool experiment
+is run before the claim is made, not after a reviewer disproves it. Documentation asserting a
+property the code does not have is worse than silence, because it stops the next reader looking.
+
+**Reversible?** The property framing is additive and cheap to keep. Reverting the enumeration in the
+fencing guard would silently restore a guard that only appears to generalize, which is the worst of
+the three states — treat it as one-way.

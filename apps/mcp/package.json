@@ -8,6 +8,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@strata/core": "*"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@strata/auth": "*",
+    "@strata/core": "*",
+    "@strata/storage": "*"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@strata/ingest": "*"
   }
 }

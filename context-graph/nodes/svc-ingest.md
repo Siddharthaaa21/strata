@@ -5,7 +5,7 @@ title: Ingestion pipeline
 status: planned
 owner: ingest
 spec: .claude/agents/strata-ingest-engineer.md
-depends_on: [contract-doc, contract-source, contract-import-event, dec-tenancy, risk-injection]
+depends_on: [contract-doc, contract-source, contract-import-event, dec-tenancy, risk-injection, svc-storage]
 ---
 
 fetch (per-source adapter) → raw → normalize (shared) → dedupe → persist → ImportEvent. Adapters
@@ -21,3 +21,15 @@ See ADR 0003/D10: the local Markdown adapter's fetch/normalize/dedupe stage intr
 injection surface under three invariants (no model-derived values, ingested text never selects a
 code path, ingested text never reaches `ImportEvent.error.message`) — but it does surface a real
 gap in R2 itself, since `search_docs` returns metadata derived from that same untrusted content.
+
+The persist stage now exists (`packages/ingest/src/persist.ts`), closing the one gap ADR 0003 left
+open because `svc-storage` did not exist yet. It is a separate module from `pipeline.ts` on purpose:
+the decision logic stays free of any storage dependency and testable on its own. M4 fixes: the
+per-run dedupe guard is now keyed on the (sourceId, externalId) PAIR instead of the full triple
+(packages/ingest/src/pipeline.ts), so two different files normalizing to one externalId no longer
+silently overwrite each other. `persistDecisions` returns a `reconciled` map and `persistIngest`
+rewrites affected ImportEvent.docId values, so events can no longer point at rows that do not exist.
+
+`unchanged` rows are skipped rather than re-upserted. Re-writing them is harmless for correctness —
+the upsert is idempotent — but it would rewrite `updated_at` and the search vector on every scan,
+making every document look freshly modified and destroying recency as a ranking tiebreaker.

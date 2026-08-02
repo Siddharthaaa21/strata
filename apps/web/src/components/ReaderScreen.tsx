@@ -1,8 +1,8 @@
 import Link from 'next/link';
-import type { Doc, Source } from '@strata/core';
-import { docs } from '@strata/core';
+import type { Doc } from '@strata/core';
 import { accent } from '@strata/tokens';
 import { formatDate } from '../lib/format-date';
+import { MarkdownBody } from './MarkdownBody';
 import styles from './ReaderScreen.module.css';
 
 /**
@@ -15,11 +15,21 @@ import styles from './ReaderScreen.module.css';
  * There is no fixture to wire here — the paragraphs below are inline, obviously-placeholder copy
  * that exists only to demonstrate the reading type scale, not a stand-in for real ingested content.
  */
-export function ReaderScreen({ doc, source }: { doc: Doc; source: Source }) {
-  const others = docs.filter((d) => d.id !== doc.id);
-  const sameFolder = others.filter((d) => d.folder.value === doc.folder.value);
-  const rest = others.filter((d) => d.folder.value !== doc.folder.value);
-  const related = [...sameFolder, ...rest].slice(0, 3);
+/** Related is passed in, not computed here: the component has no store and no `Scope`. */
+export interface RelatedDoc {
+  readonly id: string;
+  readonly title: string;
+}
+
+export function ReaderScreen({
+  doc,
+  source,
+  related,
+}: {
+  doc: Doc & { readonly body: string };
+  source: { readonly name: string };
+  related: readonly RelatedDoc[];
+}) {
 
   return (
     <div className={styles.screen}>
@@ -34,23 +44,7 @@ export function ReaderScreen({ doc, source }: { doc: Doc; source: Source }) {
           <div className={styles.meta}>{formatDate(doc.updatedAt)}</div>
 
           <div className={`serif ${styles.body}`}>
-            <p>
-              Placeholder reading content. <code>Doc</code> intentionally has no <code>body</code> field (see the
-              &ldquo;body separability&rdquo; note in <code>packages/core/src/index.ts</code>), so this paragraph
-              and the ones below exist only to demonstrate the reader&rsquo;s type scale and rhythm at a realistic
-              length — they are not a description of this document&rsquo;s actual contents.
-            </p>
-            <div className={styles.heading}>Section heading</div>
-            <p>
-              Section headings in the reader body sit at 20px/600, a step below the reader title and a step above
-              body copy, giving long-form placeholder text a scannable shape without any real prose driving it.
-            </p>
-            <div className={styles.heading}>Example code block</div>
-            <div className={styles.code}>placeholder_key = hash(doc_id, source_id, updated_at)</div>
-            <p>
-              The monospace block above is the one code sample the reader design calls for — light background, no
-              border, 14px/monospace — again standing in for whatever a real document body would contain.
-            </p>
+            <MarkdownBody body={doc.body} />
           </div>
         </div>
       </div>
