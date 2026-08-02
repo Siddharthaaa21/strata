@@ -61,7 +61,13 @@ export function createNodeFileSystemPort(): FileSystemPort {
       const out: FileEntry[] = [];
 
       const walk = async (dir: string) => {
-        const entries = await readdir(dir, { withFileTypes: true });
+        // Sorted, because bare readdir order is filesystem-defined and can change when an unrelated
+        // sibling is added or removed. Anywhere two files contend for one identity, "first wins"
+        // would otherwise resolve differently between runs — the same document flip-flopping, which
+        // is exactly the failure the pipeline's collision guard exists to make deterministic.
+        const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
+          a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+        );
         for (const entry of entries) {
           const full = join(dir, entry.name);
           if (entry.isSymbolicLink()) {

@@ -144,49 +144,99 @@ const LOADED = {
 
 /** The whole point of the suite. Applies to any tool, present or future. */
 function assertEveryMarkerIsDeclared(payload: Record<string, unknown>, where: string) {
-  const declared = payload['untrustedFields'];
-  assert.ok(Array.isArray(declared), `${where}: response declares untrustedFields`);
+  // Deliberately conditional on actually carrying content. `list_sources` returns operator config
+  // — connector name, kind, status — none of it ingested, so requiring a declaration there would be
+  // cargo cult: a `untrustedFields` on a payload with nothing untrusted in it teaches a reader that
+  // the field is boilerplate. The invariant is "no ingested content in an undeclared field", and a
+  // response carrying no ingested content satisfies it trivially.
+  //
+  // The gap that leaves, recorded because this test cannot see it: if a connector ever writes a
+  // REMOTE-supplied source name (a GitHub repo description, say), `list_sources` becomes a content
+  // channel with no fence and no marker planted here to catch it. That is an M5 problem — no
+  // connector exists yet — and it is in the risk register rather than papered over with an
+  // assertion that would pass today for the wrong reason.
+  const declared = (Array.isArray(payload['untrustedFields']) ? payload['untrustedFields'] : []) as string[];
 
-  const markers = Object.values(M);
   for (const leaf of stringLeaves(payload)) {
     // `untrustedFields` itself lists field NAMES, never values; skip it or it matches its own list.
     if (leaf.key === 'untrustedFields') continue;
-    for (const marker of markers) {
+    for (const marker of Object.values(M)) {
       if (!leaf.value.includes(marker)) continue;
-      const ok = (declared as string[]).includes(leaf.key) || leaf.key === 'content';
       assert.ok(
-        ok,
+        declared.includes(leaf.key) || leaf.key === 'content',
         `${where}: ingested content (${marker}) surfaced in "${leaf.key}", which is neither ` +
-          `declared in untrustedFields (${(declared as string[]).join(', ')}) nor the fenced body`,
+          `declared in untrustedFields (${declared.join(', ') || 'none declared'}) nor the fenced body`,
       );
     }
   }
 }
 
-test('search_docs surfaces no ingested content in an undeclared field', async () => {
-  const client = await ingestAndConnect(LOADED);
-  const res = parse(await client.callTool({ name: 'search_docs', arguments: { query: 'runbook' } }));
+/**
+ * Calls EVERY tool the server advertises, not a hardcoded list.
+ *
+ * This is the difference between a suite that generalizes and one that only appears to. The first
+ * version of this file named `search_docs` and `get_doc` directly; a reviewer added a fourth tool
+ * that returned the raw body, title, folder and tags with no fencing at all, and the suite passed
+ * 5/5. A guard that cannot see a new tool cannot protect against one.
+ *
+ * Arguments are derived from each tool's own `inputSchema`, so a tool added tomorrow is exercised
+ * without editing this file — which is the only version of the claim worth making.
+ */
+async function callEveryTool(client: Client, docId: string) {
+  const { tools } = await client.listTools();
+  assert.ok(tools.length > 0, 'the server advertises at least one tool');
 
-  const results = res['results'] as Record<string, unknown>[];
-  assert.equal(results.length, 1, 'the planted document is found');
-  assertEveryMarkerIsDeclared(res, 'search_docs');
-});
+  const out: { name: string; payload: Record<string, unknown> }[] = [];
+  for (const tool of tools) {
+    const props = (tool.inputSchema?.['properties'] ?? {}) as Record<string, unknown>;
+    const args: Record<string, unknown> = {};
+    // Values chosen to actually reach the planted document — a tool called with arguments that
+    // return nothing would pass this suite while proving nothing.
+    if ('query' in props) args['query'] = 'runbook';
+    if ('doc_id' in props) args['doc_id'] = docId;
 
-test('get_doc surfaces no ingested content in an undeclared field', async () => {
+    const res = await client.callTool({ name: tool.name, arguments: args });
+    assert.ok(!(res as { isError?: boolean }).isError, `${tool.name} returned a usable response`);
+    out.push({ name: tool.name, payload: parse(res) });
+  }
+  return out;
+}
+
+test('no advertised tool surfaces ingested content in an undeclared field', async () => {
   const client = await ingestAndConnect(LOADED);
   const hits = parse(await client.callTool({ name: 'search_docs', arguments: { query: 'runbook' } }));
   const docId = (hits['results'] as { doc_id: string }[])[0]!.doc_id;
 
+  const responses = await callEveryTool(client, docId);
+  assert.ok(
+    responses.some((r) => r.name === 'get_doc') && responses.some((r) => r.name === 'search_docs'),
+    'the enumeration actually reached the content-bearing tools',
+  );
+
+  for (const { name, payload } of responses) {
+    assertEveryMarkerIsDeclared(payload, name);
+  }
+});
+
+test('get_doc declares the three fields that were leaking', async () => {
+  const client = await ingestAndConnect(LOADED);
+  const hits = parse(await client.callTool({ name: 'search_docs', arguments: { query: 'runbook' } }));
+  const docId = (hits['results'] as { doc_id: string }[])[0]!.doc_id;
   const doc = parse(await client.callTool({ name: 'get_doc', arguments: { doc_id: docId } }));
 
-  // The regression itself: before the fix, title/folder/tags arrived here undeclared.
-  assertEveryMarkerIsDeclared(doc, 'get_doc');
+  // The original regression, kept as a named case so a failure says which field came back.
   for (const field of ['title', 'folder', 'tags']) {
     assert.ok(
       (doc['untrustedFields'] as string[]).includes(field),
       `get_doc declares ${field} as untrusted`,
     );
   }
+});
+
+test('search_docs finds the planted document at all', async () => {
+  const client = await ingestAndConnect(LOADED);
+  const res = parse(await client.callTool({ name: 'search_docs', arguments: { query: 'runbook' } }));
+  assert.equal((res['results'] as unknown[]).length, 1);
 });
 
 test('the warning precedes the payload it describes, in key order', async () => {

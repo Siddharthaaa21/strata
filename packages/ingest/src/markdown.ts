@@ -73,7 +73,19 @@ export function contentHash(raw: string): string {
  */
 export function toExternalId(relativePath: string): string {
   if (relativePath.includes(NUL)) throw new MarkdownError('path-invalid');
-  const id = relativePath.split('\\').join('/').normalize('NFC');
+
+  // A backslash is REJECTED, not folded to '/'. Folding was the collision primitive: on POSIX a
+  // file legitimately named `a\b.md` folded onto the real path `a/b.md`, and since identity is the
+  // path, the two became one document. Within a run that is now a reported failure; ACROSS runs it
+  // was undetectable — storage sees one externalId with a changed hash, which is indistinguishable
+  // from an edit — so the second file silently overwrote the first with no event at all.
+  //
+  // Folding was never this function's job. `createNodeFileSystemPort` already converts `path.sep`
+  // to '/', so a Windows checkout arrives POSIX-separated before it gets here. Doing it twice
+  // bought nothing and cost a silent-data-loss path.
+  if (relativePath.includes('\\')) throw new MarkdownError('path-invalid');
+
+  const id = relativePath.normalize('NFC');
   if (id === '' || id.startsWith('../')) throw new MarkdownError('path-invalid');
   return id;
 }
@@ -117,20 +129,27 @@ const asString = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.t
 
 const asStringArray = (v: unknown): readonly string[] | undefined => {
   if (!Array.isArray(v)) return undefined;
-  const out = [...new Set(v.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean))];
+  const out = [
+    ...new Set(
+      v
+        .filter((x): x is string => typeof x === 'string')
+        .map((s) => s.trim().slice(0, MAX_TAG))
+        .filter(Boolean),
+    ),
+  ];
   return out.length ? out.slice(0, 32) : undefined;
 };
 
 /** Title: frontmatter -> first ATX heading -> basename with separators as spaces. */
 export function deriveTitle(origin: RawOrigin, body: string): string {
   const declared = origin.declaredTitle;
-  if (declared) return declared;
+  if (declared) return declared.slice(0, MAX_TITLE);
 
   const heading = /^#\s+(.+)$/m.exec(body)?.[1]?.trim();
-  if (heading) return heading;
+  if (heading) return heading.slice(0, MAX_TITLE);
 
   const base = origin.path.split('/').pop() ?? origin.path;
-  return base.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim() || base;
+  return (base.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim() || base).slice(0, MAX_TITLE);
 }
 
 /**
@@ -143,6 +162,26 @@ export function deriveTitle(origin: RawOrigin, body: string): string {
  * cap is what makes that promise true rather than aspirational.
  */
 export const MAX_EXCERPT = 280;
+
+/**
+ * Upper bounds on the other three metadata channels.
+ *
+ * Capping only the excerpt was the incomplete half of this fix, and a reviewer measured the
+ * consequence: `title`, `folder`, and `tags` were bounded solely by the 2 MiB file cap, so three
+ * documents with a ~500 KB `title:` produced a **3.2 MB `search_docs` response** — with the excerpt
+ * dutifully clipped to 280. At `MAX_RESULTS` rows the ceiling is tens of megabytes.
+ *
+ * Fencing does not help against volume. A payload larger than the context window is a denial of
+ * service whether or not it is correctly labelled as untrusted, and `search_docs` promises
+ * "metadata and excerpts only, never document bodies" — a promise about size as much as about
+ * fields. Every channel that crosses the wire needs a bound, not just the one named "excerpt".
+ *
+ * These caps live in the adapter, which is the wrong layer and is recorded as such: a future
+ * Claude/Cursor/GitHub adapter must re-apply them, because `DocStore.upsert` enforces nothing.
+ */
+export const MAX_TITLE = 300;
+export const MAX_FOLDER = 200;
+export const MAX_TAG = 64;
 
 /**
  * Excerpt: frontmatter description/summary (`source`), else the first prose block (`heuristic`).
@@ -178,11 +217,13 @@ export function deriveExcerpt(origin: RawOrigin, body: string): Derived<string> 
  */
 export function deriveFolder(origin: RawOrigin, rootName: string): Derived<string> {
   const at = origin.modifiedAt;
-  if (origin.declaredFolder) return { value: origin.declaredFolder, provenance: 'source', derivedAt: at };
+  if (origin.declaredFolder) {
+    return { value: origin.declaredFolder.slice(0, MAX_FOLDER), provenance: 'source', derivedAt: at };
+  }
 
   const dir = origin.path.split('/').slice(0, -1).join('/');
-  if (dir) return { value: dir, provenance: 'source', derivedAt: at };
-  return { value: rootName, provenance: 'heuristic', derivedAt: at };
+  if (dir) return { value: dir.slice(0, MAX_FOLDER), provenance: 'source', derivedAt: at };
+  return { value: rootName.slice(0, MAX_FOLDER), provenance: 'heuristic', derivedAt: at };
 }
 
 /**

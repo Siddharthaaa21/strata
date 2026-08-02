@@ -56,8 +56,15 @@ follows the value into all of them.
 > `fenceResults` and `fenceDoc` are the only ways to build a response, and
 > `apps/mcp/src/fencing.test.ts` plants markers in every content-derived input and asserts every
 > occurrence in the serialized payload is either declared in `untrustedFields` or inside the nonce
-> envelope. That test fails for a *new* tool that forgets, which is the property this section
-> claimed the type would provide.
+> envelope.
+>
+> **Second correction, same day.** The sentence that stood here said that test "fails for a *new*
+> tool that forgets." It did not — the suite hardcoded the two tool names that existed, and a
+> reviewer added a third returning raw body, title, folder and tags to 5/5 green. The claim was
+> written into five documents and verified in none of them. It is now true: the suite enumerates
+> `tools/list` and derives each call's arguments from that tool's own `inputSchema`, and the claim
+> was checked the only way it can be — by adding a leaking tool and confirming the failure names
+> the field. A claim about what a test would catch is itself testable; see D14.
 >
 > The type stays. It is useful documentation at the ingest boundary and it makes the lint rule
 > possible. It is just not the guarantee — and the difference matters, because believing it was the

@@ -75,12 +75,38 @@ was correct, and it is worth recording *which* attacks, because they cluster:
 | `upsert` was two unwrapped statements — a crash left a searchable, permanently unreadable document that retry reported as `unchanged` | Every test asserted the post-state of a *successful* write |
 | `sources.upsert` nulled `credential_ref` when omitted | No caller passes one yet, so nothing exercised it |
 
-Every one is fixed, each with a regression test that was **confirmed to fail against the old code**
-before being kept. The `get_doc` guard is structural rather than per-field
-(`apps/mcp/src/fencing.test.ts`): it plants markers in every content-derived input and demands that
-every occurrence in a real serialized response is either declared in `untrustedFields` or inside the
-nonce envelope — so a *future* tool that returns a new ingested field fails without anyone
-remembering to add a case. That is the shape the per-field tests should have had from the start.
+**Round two, same day, and this is the part worth reading.** The round-one fixes were re-reviewed by
+two more independent passes. Both returned do-not-ship, and they were right: **two of the four
+claimed fixes did not do what the commit, this register, ADR 0005, the decision log, and the context
+graph all said they did.** The fixes were written by the person who had just read the round-one
+findings, which is the same authorship problem one level up — the thing this entry predicted would
+happen, happening.
+
+| Claimed in round one | What round two measured |
+| --- | --- |
+| "a *future* tool that returns a new ingested field fails without anyone remembering to add a case" | The suite hardcoded two tool names. A reviewer added a fourth tool returning raw body, title, folder and tags — **5/5 passed.** It could not see a new tool at all |
+| "`MAX_EXCERPT` makes `search_docs`'s never-bodies promise true" | Only `description:` was capped. `title`, `folder` and `tags` were bounded solely by the 2 MiB file cap — three documents produced a **3.2 MB `search_docs` response**, with the excerpt dutifully clipped to 280 |
+| Tag block closed the smuggling channel | Variation selectors (`U+FE00`–`FE0F`, `U+E0100`–`E01EF`) encode the same 256 byte values 129 codepoints higher, and carried the identical payload end to end. Eleven further carriers behind them |
+| Collision guard "killed the flip-flop" | Within-run only, and "first wins" depended on unsorted `readdir`, so it still flip-flopped. Cross-run collisions overwrote silently with no event at all |
+| Atomicity test | Vacuous — it threw client-side on `sql.includes('doc_bodies')`, which after merging into one statement rejected the whole thing before it ran. It asserted `docs` was empty for the emptiest possible reason: nothing executed. (Atomicity itself is real; a reviewer proved it properly by forcing a `NOT NULL` violation server-side) |
+
+All five are now fixed, and the two structural lessons are encoded rather than just noted:
+
+- **The stripped set is a property, not a carrier list.** "Nothing default-ignorable survives
+  ingest." Two rounds of patching the named carrier produced a set that was one technique short each
+  time; a property does not have that failure mode. `U+FE0F` is stripped knowingly, at the cost of
+  emoji presentation.
+- **The fencing guard enumerates `tools/list`** and derives arguments from each tool's own
+  `inputSchema`, so a tool added tomorrow is exercised without editing the test. This was verified
+  the only way it can be: by adding a leaking tool and confirming the suite fails naming the exact
+  field (`get_doc_raw: ingested content surfaced in "headline"`). The round-one version of this
+  claim was asserted, not tested, in five places.
+
+Also found and fixed in round two: `normalizeIngested` composed before stripping, so its output was
+not NFC as documented — a zero-width space between a base letter and its accent left text that
+rendered as `résumé` but did not match a search for it. And the pre-existing "every declared range
+is actually stripped" test used `String.fromCharCode`, which truncates to 16 bits — so it tested
+`U+0000` instead of `U+E0000` and passed for the wrong reason.
 
 **What the review cleared, which is substantial:** the workspace boundary held under three separate
 attempts. Every SQL statement was enumerated individually and every one constrains `workspace_id` in

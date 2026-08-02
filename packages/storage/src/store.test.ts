@@ -313,19 +313,34 @@ test('upsert writes the doc and its body in a single statement', async () => {
 });
 
 test('a failed upsert leaves no bodyless document behind', async () => {
-  const { db } = await freshStore();
-  const failing: SqlDriver = {
-    query: (sql, params) => {
-      if (sql.includes('doc_bodies')) throw new Error('connection lost');
-      return db.query(sql, params);
-    },
-    exec: (sql) => db.exec(sql),
-  };
-
-  await assert.rejects(() => createDocStore(failing).upsert(scopeFor(WS_A), doc()));
+  // The failure must happen INSIDE Postgres, after the docs insert has logically occurred. An
+  // earlier version of this test threw client-side on `sql.includes('doc_bodies')`, which — now
+  // that both inserts are one statement — rejected the whole thing before it ever ran. It asserted
+  // `docs` was empty and passed for the emptiest possible reason: nothing had executed.
+  //
+  // A NULL body violates doc_bodies.body NOT NULL, which fires during the CTE's second insert.
+  // That is the real crash-mid-persist shape, and only true atomicity makes `docs` empty after it.
+  const { db, store } = await freshStore();
+  await assert.rejects(() =>
+    store.upsert(scopeFor(WS_A), doc({ body: null as unknown as string })),
+  );
 
   const { rows } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM docs');
   assert.equal(rows[0]?.n, 0, 'the metadata row must not survive a failed body write');
+});
+
+test('a conflicting upsert still writes the body — the CTE always yields a row', async () => {
+  // The dangerous rewrite bug: if ON CONFLICT DO UPDATE produced no RETURNING row, the CTE would
+  // feed nothing to the doc_bodies insert and silently skip it, reintroducing the exact bodyless
+  // document this change removed. DO UPDATE has no WHERE, so Postgres always updates and always
+  // returns — asserted here rather than assumed, because it is the whole load-bearing detail.
+  const { db, store } = await freshStore();
+  const id = await store.upsert(scopeFor(WS_A), doc({ body: 'first body' }));
+  await db.query('DELETE FROM doc_bodies WHERE doc_id = $1', [id]);
+
+  const again = await store.upsert(scopeFor(WS_A), doc({ contentHash: 'sha256:bbb', body: 'second body' }));
+  assert.equal(again, id, 'the stored id still wins on conflict');
+  assert.equal((await store.get(scopeFor(WS_A), id)).body, 'second body');
 });
 
 test('the body is readable immediately after upsert — both rows land together', async () => {

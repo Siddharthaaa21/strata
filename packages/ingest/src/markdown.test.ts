@@ -23,6 +23,11 @@ import {
   toExternalId,
   MarkdownError,
   MAX_EXCERPT,
+  MAX_TITLE,
+  MAX_FOLDER,
+  MAX_TAG,
+  deriveTitle,
+  deriveFolder,
 } from './markdown.ts';
 import { runIngest, type KnownDoc } from './pipeline.ts';
 
@@ -82,9 +87,16 @@ test('canonicalize does not collapse content differences', () => {
   assert.equal(canonicalize('x'), 'x\n');
 });
 
-test('externalId is POSIX-separated and NFC-normalized', () => {
-  assert.equal(toExternalId('notes\\arch\\a.md'), 'notes/arch/a.md');
+test('externalId is NFC-normalized', () => {
   assert.equal(toExternalId('caf' + String.fromCharCode(0x65, 0x301) + '.md'), 'café.md');
+  assert.equal(toExternalId('notes/arch/a.md'), 'notes/arch/a.md');
+});
+
+test('a backslash is rejected, not folded onto a real path', () => {
+  // Folding `a\b.md` to `a/b.md` merged two distinct files into one identity. Within a run that is
+  // now a reported collision; across runs it was undetectable and silently overwrote. The Node port
+  // already converts path.sep to '/', so nothing needs this fold.
+  assert.throws(() => toExternalId('notes\\arch\\a.md'), (e: Error) => e instanceof MarkdownError);
 });
 
 test('a NUL in a path is rejected, because it forges identity keys', () => {
@@ -285,9 +297,13 @@ test('two files colliding on one externalId fail loudly instead of overwriting e
   // different hashes, so a run guard keyed on the full triple missed and BOTH were decided `new` —
   // the second silently upserted over the first, and every later run flip-flopped the surviving
   // row between the two documents forever.
+  // NFD vs NFC filenames — the collision that REMAINS after backslash folding was removed.
+  // `toExternalId` must NFC-normalize for identity stability across filesystems, so on a
+  // normalization-preserving filesystem these two distinct files legitimately land on one id.
+  const nfd = 'caf' + String.fromCharCode(0x65, 0x301) + '.md';
   const { pending, failures } = await scan({
-    'a/b.md': { text: '# Alpha\n\nfirst document' },
-    'a\\b.md': { text: '# Bravo\n\nsecond, entirely different document' },
+    'café.md': { text: '# Alpha\n\nfirst document' },
+    [nfd]: { text: '# Bravo\n\nsecond, entirely different document' },
   });
   assert.equal(pending.length, 2, 'the scan legitimately produces two files');
   assert.equal(pending[0]?.externalId, pending[1]?.externalId, 'which collide on identity');
@@ -310,4 +326,35 @@ test('the same file enumerated twice is still a quiet duplicate, not a failure',
 
   assert.equal(decisions.length, 1);
   assert.equal(counts.failed, 0, 'identical bytes under one identity is not a collision');
+});
+
+test('title, folder and tags are bounded too — not just the excerpt', () => {
+  // Capping only the excerpt left three unbounded channels: a reviewer measured a 3.2 MB
+  // search_docs response from three documents with a ~500 KB title, with the excerpt dutifully
+  // clipped to 280. Fencing does not help against volume.
+  const origin = {
+    declaredTitle: 'T'.repeat(50_000),
+    declaredFolder: 'F'.repeat(50_000),
+    declaredTags: ['G'.repeat(50_000)],
+    path: 'a.md',
+    modifiedAt: '2026-07-28T00:00:00.000Z',
+    createdAt: '2026-07-01T00:00:00.000Z',
+  };
+
+  assert.equal(deriveTitle(origin, '').length, MAX_TITLE);
+  assert.equal(deriveFolder(origin, 'vault').value.length, MAX_FOLDER);
+});
+
+test('a frontmatter tag is capped per tag, through the real scan path', async () => {
+  const { pending } = await scan({
+    'big.md': { text: `---\ntags: ["${'G'.repeat(5000)}"]\n---\n\n# Doc\n\nprose` },
+  });
+  assert.equal(pending[0]?.tags.value[0]?.length, MAX_TAG);
+});
+
+test('a huge frontmatter title cannot inflate a search payload', async () => {
+  const { pending } = await scan({
+    'big.md': { text: `---\ntitle: "${'T'.repeat(500_000)}"\n---\n\n# Doc\n\nprose` },
+  });
+  assert.equal(pending[0]?.title.length, MAX_TITLE);
 });

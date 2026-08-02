@@ -33,8 +33,23 @@ export type Untrusted<T> = T & { readonly [untrustedWitness]: true };
  *   0x202A-0x202E, 0x2066-0x2069     bidi overrides and isolates (Trojan Source)
  *   0xE0000-0xE007F                  Unicode Tag block — the ASCII-smuggling carrier
  *
- * The last two entries were added after an independent review broke the previous set, and both are
- * worth explaining because neither is obvious:
+ * ENUMERATE THE PROPERTY, NOT THE ATTACKS. Two review rounds hit this file, and the second one is
+ * the lesson. Round one added the Tag block; round two smuggled the identical payload through
+ * variation selectors (U+FE00-FE0F and U+E0100-E01EF encode the same 256 byte values, 129
+ * codepoints above where round one stopped), then listed eleven more carriers behind it. Patching
+ * the named carrier is how you get a list that is always one technique short of an attacker who
+ * read the same Unicode chapter.
+ *
+ * So the rule this set now implements is a property: *nothing default-ignorable survives ingest.*
+ * If a codepoint renders as nothing while remaining a token to a model, it can make the Library and
+ * the agent disagree, and that is the whole threat. Adding a carrier is only correct when the
+ * property already covered it and the range was written wrong.
+ *
+ * U+FE0F is in the set knowingly: it selects emoji presentation, so stripping it can render an
+ * emoji in text style. That is a real cost, paid on purpose — a character that is invisible by
+ * definition cannot be allowed through on the grounds that it is usually benign.
+ *
+ * Two entries are worth explaining individually because neither is obvious:
  *
  *   Tag block. Every codepoint in it is default-ignorable, so it renders as nothing at all while
  *   remaining ordinary text in a model's token stream. An attacker encodes an instruction one
@@ -48,18 +63,35 @@ export type Untrusted<T> = T & { readonly [untrustedWitness]: true };
  *   untrusted string arrives as a JSON *value* and therefore cannot produce a free-standing line.
  *   U+2028 was the one character that defeated that, so it is a structural hole, not a rendering
  *   nicety. Stripped rather than folded to LF: nothing in Markdown legitimately uses it.
+ *
+ * Everything else in the list is the rest of the default-ignorable set, per the property above.
  */
 export const STRIPPED_RANGES: readonly (readonly [number, number])[] = [
   [0x00, 0x08],
   [0x0b, 0x1f],
   [0x7f, 0x9f],
+  [0x00ad, 0x00ad],
+  [0x034f, 0x034f],
   [0x061c, 0x061c],
+  [0x115f, 0x1160],
+  [0x17b4, 0x17b5],
+  [0x180b, 0x180f],
   [0x200b, 0x200f],
   [0x2028, 0x2029],
   [0x202a, 0x202e],
+  [0x2060, 0x2064],
+  [0x2065, 0x2065],
   [0x2066, 0x2069],
+  [0x206a, 0x206f],
+  [0x3164, 0x3164],
+  [0xfe00, 0xfe0f],
+  [0xffa0, 0xffa0],
+  [0xfff9, 0xfffb],
   [0xfeff, 0xfeff],
+  [0x1bca0, 0x1bca3],
+  [0x1d173, 0x1d17a],
   [0xe0000, 0xe007f],
+  [0xe0100, 0xe01ef],
 ];
 
 // `\u{...}` rather than a padded 4-digit `\uXXXX`: the tag block is astral, and the surrogate-pair
@@ -82,7 +114,12 @@ const DANGEROUS = new RegExp(
  * NFC matches ADR 0003's path normalization, so identity and content agree on encoding.
  */
 export function normalizeIngested(raw: string): Untrusted<string> {
-  return raw.normalize('NFC').replace(DANGEROUS, '') as Untrusted<string>;
+  // Strip FIRST, compose SECOND. The reverse order does not produce NFC output, despite this
+  // function promising it: a zero-width space between a base letter and its combining accent blocks
+  // composition (the ZWSP is a ccc=0 starter), so NFC leaves the pair decomposed and the strip then
+  // removes the blocker — yielding text that renders as "résumé" but is stored decomposed and does
+  // not match a search for "résumé". That is a search-evasion primitive, not a cosmetic difference.
+  return raw.replace(DANGEROUS, '').normalize('NFC') as Untrusted<string>;
 }
 
 /**

@@ -322,3 +322,43 @@ one level up, so R2 does not close until the fixes are themselves independently 
 **Reversible?** The test is additive. The `fenceDoc` payload adds two keys to `get_doc` output
 (`notice`, `untrustedFields`) ahead of the existing ones — an additive wire change, and the output
 shape was never pinned. Removing it would reopen the hole, so treat it as one-way.
+
+---
+
+## D14 — Enumerate the property, not the attacks · 2026-08-02
+
+**Context.** D13's fixes were re-reviewed the same day by two further independent passes. Both
+returned do-not-ship. Two of the four fixes did not do what D13, ADR 0005, the risk register, the
+commit message, and the context graph all claimed. Specifics are in R2; the pattern is the point.
+
+**What went wrong, in one line each.** The fencing guard was written against the two tools that
+existed, so a reviewer added a third and the suite passed 5/5. The excerpt cap was applied to the
+field named "excerpt", so `title`, `folder`, and `tags` stayed unbounded and produced a 3.2 MB
+`search_docs` response. The stripped-character set was extended with the carrier round one found,
+so round two used the carrier 129 codepoints above it.
+
+**Decision.** Where a defense enumerates, it must enumerate the *property* or the *live surface*,
+never the instances known at authoring time.
+
+- Stripped characters: the rule is "nothing default-ignorable survives ingest", not a list of
+  carriers. A carrier is added only when the property already covered it and the range was wrong.
+- Fencing: the guard calls `tools/list` and derives arguments from each tool's own `inputSchema`.
+  It tests the surface the server advertises, not the surface the test author remembered.
+- Bounds: every metadata channel that crosses the wire is capped, not the one that sounds like it
+  carries prose.
+
+**Why this is a decision and not just a bug fix.** All three round-one fixes were locally correct.
+Each closed the exact defect reported. They failed because a defect report is a *sample* of a class,
+and treating it as the class is how a security fix becomes a security theatre. The generalization
+step is not optional polish — it is the fix.
+
+**The method finding, which is the expensive one.** Round one's claims were asserted in five places
+and tested in none. "A future tool that forgets will fail here" was written into a commit message,
+an ADR, the risk register, this log, and a graph node without anyone adding a future tool to check.
+A claim about what a test *would* catch is itself testable, and now is: the leaking-tool experiment
+is run before the claim is made, not after a reviewer disproves it. Documentation asserting a
+property the code does not have is worse than silence, because it stops the next reader looking.
+
+**Reversible?** The property framing is additive and cheap to keep. Reverting the enumeration in the
+fencing guard would silently restore a guard that only appears to generalize, which is the worst of
+the three states — treat it as one-way.
