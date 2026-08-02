@@ -13,7 +13,7 @@
  *      enumeration oracle over document ids.
  */
 
-import { fence, fenceResults, asUntrusted, type Scope, type DocId } from '@strata/core';
+import { fence, fenceDoc, fenceResults, asUntrusted, type Scope, type DocId } from '@strata/core';
 import { MAX_RESULTS, type DocStore, type SourceStore } from '@strata/storage';
 
 /**
@@ -142,7 +142,9 @@ export async function getDoc(scope: Scope, store: DocStore, input: { doc_id?: un
     throw new ToolError('NotFound');
   }
 
-  return {
+  // Structural fencing for the metadata, exactly as search_docs does. `title`, `folder`, and `tags`
+  // are ingested content too — the body is merely the largest channel, not the only one.
+  return fenceDoc({
     doc_id: doc.id,
     source_id: doc.sourceId,
     title: doc.title,
@@ -150,9 +152,10 @@ export async function getDoc(scope: Scope, store: DocStore, input: { doc_id?: un
     tags: doc.tags.value,
     updated_at: doc.updatedAt,
     // Body is the highest-risk channel: a whole document read into an agent's context. Nonce
-    // envelope, per ADR 0005.
+    // envelope, per ADR 0005 — the envelope is what a delimiter buys that JSON structure does not,
+    // and it matters here because a body is long enough for a reader to lose the enclosing context.
     content: fence(asUntrusted(doc.body)),
-  };
+  });
 }
 
 /** What a source looks like on the wire. No workspaceId, no credentialRef. */

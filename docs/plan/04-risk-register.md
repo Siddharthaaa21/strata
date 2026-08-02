@@ -28,7 +28,7 @@ sequenced (M4/M6); they were waiting on this, not on milestone order.
 
 ---
 
-## R2 — Prompt injection through ingested content · **MITIGATED, independent review outstanding**
+## R2 — Prompt injection through ingested content · **INDEPENDENT REVIEW DONE, FOUND DEFECTS; RE-VERIFICATION OUTSTANDING**
 
 `risk-injection`
 
@@ -59,10 +59,47 @@ forgery with a guessed delimiter, a mimicked preamble, instructions planted in t
 bidi and zero-width hiding, smuggling content out through an error message, and NUL identity
 forgery.
 
-**Still open, and this is the honest gap:** the red-teaming was written by the same author as the
-defenses, which is materially weaker than an independent adversarial review. Someone who did not
-write `untrusted.ts` will think of attacks its author did not. The `strata-verifier` sign-off below
-is that review and has not happened — subagents were not in use for this session.
+**Independent review ran 2026-08-02, and the gap above was real.** Three `strata-verifier` passes
+(tenancy, injection, data integrity), each given the target and an adversarial mandate and none told
+what the defenses were or how they were meant to work. All three returned **do-not-ship**. The
+prediction that "someone who did not write `untrusted.ts` will think of attacks its author did not"
+was correct, and it is worth recording *which* attacks, because they cluster:
+
+| Found | Why the author's suite missed it |
+| --- | --- |
+| `get_doc` returned `title`/`folder`/`tags` unfenced, above the only preamble | Every metadata test went through `search_docs`; the one `get_doc` test asserted on `content` and passed for the wrong reason |
+| Unicode Tag block (`U+E0000`–`U+E007F`) not stripped | The author tested the hiding techniques they knew (RLO, ZWSP) and stopped at the edge of that list |
+| `U+2028` survives, and `JSON.stringify` does not escape it — a real line break inside the structural fence | Required knowing a serialization detail, not a Unicode one. Different domain from the rest of the defense |
+| Frontmatter `excerpt` unbounded — 1.5 MB `description` produced a 1.5 M-character `search_docs` response | The heuristic path was capped, so the *concept* looked handled |
+| Two files colliding on one `externalId` silently destroyed one and flip-flopped forever | The run guard keyed on the triple, which looks more careful than the pair and is strictly worse here |
+| `upsert` was two unwrapped statements — a crash left a searchable, permanently unreadable document that retry reported as `unchanged` | Every test asserted the post-state of a *successful* write |
+| `sources.upsert` nulled `credential_ref` when omitted | No caller passes one yet, so nothing exercised it |
+
+Every one is fixed, each with a regression test that was **confirmed to fail against the old code**
+before being kept. The `get_doc` guard is structural rather than per-field
+(`apps/mcp/src/fencing.test.ts`): it plants markers in every content-derived input and demands that
+every occurrence in a real serialized response is either declared in `untrustedFields` or inside the
+nonce envelope — so a *future* tool that returns a new ingested field fails without anyone
+remembering to add a case. That is the shape the per-field tests should have had from the start.
+
+**What the review cleared, which is substantial:** the workspace boundary held under three separate
+attempts. Every SQL statement was enumerated individually and every one constrains `workspace_id` in
+the `WHERE` clause — no post-filter anywhere. `LIMIT` applies after scoping. Empty-array `Grant` is
+deny-all. No `workspaceId` or `credentialRef` reaches any client payload, traced through actual
+object construction rather than declared types. The nonce is unforgeable and unpredictable. No
+mutating tool exists. Search weights match ADR 0004 exactly.
+
+**Still open — this is what now closes R2:** the fixes above have not themselves been independently
+reviewed. Re-running the same three passes against the fixed code is the remaining step, and it is
+not a formality: fixes written by the person who read the findings have the same authorship problem
+the original defenses did.
+
+**Also open, deliberately not fixed in this pass** (recorded so they are not mistaken for oversights):
+ADR 0005 section 5's response logging is still unimplemented, so an injection that succeeds leaves no
+record; `Grant.sourceIds` is enforced on three of six store methods and must be complete before M7
+issues the first narrowed grant; and two quadratic regexes in the ingest path (`canonicalize`'s
+`/\s*$/` and the link-stripper) will hang a worker on a crafted 2 MiB file — an ingest-time DoS, not
+a live-server one, since ingest is a CLI.
 
 **Known limit, recorded as a passing test rather than left implicit:** plausible prose is delivered
 verbatim. ADR 0005 rejected stripping suspicious phrasing as unbounded and lossy, because this

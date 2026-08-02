@@ -5,7 +5,7 @@ title: MCP server
 status: in-progress
 owner: mcp
 spec: .claude/skills/mcp-surface/SKILL.md
-depends_on: [contract-doc, contract-scope, svc-search, dec-tenancy, risk-injection, dec-untrusted-content, dec-storage-search]
+depends_on: [contract-doc, contract-scope, svc-search, dec-tenancy, risk-injection, dec-untrusted-content, dec-storage-search, guarantee-fencing]
 ---
 
 All three tools implemented in apps/mcp: search_docs, get_doc, list_sources. Handlers are pure
@@ -17,4 +17,8 @@ Every tool re-checks scope itself, workspaceId and credentialRef never appear in
 NotFound is returned identically for out-of-scope and nonexistent so the error channel is not an
 enumeration oracle. list_sources filters rather than asserts - throwing would itself disclose that
 a hidden source exists. Bodies are fenced with a nonce envelope, search metadata structurally
-(dec-untrusted-content). Still open: the strata-verifier pass that closes R2.
+(dec-untrusted-content); getDoc now fences title/folder/tags through fenceDoc(). An independent
+adversarial review (M4 close) found that getDoc was returning those fields raw with no preamble
+and no untrustedFields declaration — a live prompt-injection channel that is now closed. The
+guarantee-fencing node describes the structural guard that prevents regression. Still open: the
+strata-verifier pass that closes R2.

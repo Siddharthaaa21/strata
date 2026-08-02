@@ -34,6 +34,17 @@ export interface SourceStore {
 
 export function createSourceStore(db: SqlDriver): SourceStore {
   return {
+    /**
+     * `credential_ref` updates through COALESCE, not EXCLUDED — every other column overwrites.
+     *
+     * An upsert that omits `credentialRef` must not erase a stored one. It did, and no caller
+     * passes one: `scripts/ingest.mjs` upserts the source on every run, so ingesting Markdown
+     * against an existing connector's source id nulled that connector's credential reference.
+     *
+     * A credential is the one field here that cannot be re-derived by re-running anything — every
+     * other column comes back from the next scan. Clearing it therefore needs an explicit path,
+     * which is a disconnect operation, not a side effect of an unrelated write.
+     */
     async upsert(scope, input) {
       const { workspaceId } = scopeFilter(scope);
       await db.query(
@@ -42,7 +53,7 @@ export function createSourceStore(db: SqlDriver): SourceStore {
          ON CONFLICT (workspace_id, id) DO UPDATE SET
            kind = EXCLUDED.kind, name = EXCLUDED.name, description = EXCLUDED.description,
            status = EXCLUDED.status, last_sync_at = EXCLUDED.last_sync_at,
-           credential_ref = EXCLUDED.credential_ref`,
+           credential_ref = COALESCE(EXCLUDED.credential_ref, sources.credential_ref)`,
         [
           workspaceId,
           input.id,

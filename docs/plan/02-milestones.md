@@ -100,10 +100,13 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
 
 ## M4 — Storage, search, and real data
 
-- [ ] `svc-storage` decision + implementation. Constraint from ADR 0003 (M5's ingest design,
+- [x] `svc-storage` decision + implementation. Constraint from ADR 0003 (M5's ingest design,
       built ahead of this milestone per D10): persist must upsert on
       `(workspaceId, sourceId, externalId)` and treat the `DocId` ingestion mints as a proposal,
-      not an assertion — a crash mid-persist plus a retry must not double-write.
+      not an assertion — a crash mid-persist plus a retry must not double-write. Both properties
+      held for the *row* and initially failed for the *pair*: `upsert` wrote `docs` and
+      `doc_bodies` as two unwrapped statements, and the returned canonical id was discarded by
+      `persistDecisions`. Both fixed 2026-08-02 (single data-modifying CTE; `reconciled` map).
 - [x] `svc-search` — **designed** (ADR 0004 / D11): ranking weighted for the agent case,
       provenance-weighted tags, recency as tiebreaker only. Implementation still open below.
 - [x] Implement the schema, upsert, and ranked query from ADR 0004 — `packages/storage`, 13 tests
@@ -111,15 +114,27 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
       cross-workspace leak, Grant `sourceIds` narrowing (and empty-array = deny-all), authored tags
       outranking model tags, no body in search results, limit clamped, and `NotFound` being
       indistinguishable between out-of-scope and nonexistent.
-- [ ] Connect a live Postgres server — `fromPoolLike` adapter exists but is unverified against one;
-      there is no Postgres in the dev environment yet
+- [x] Connect a live Postgres server — Supabase (PostgreSQL 17.6, pooler port 6543). `fromPoolLike`
+      is verified against it by `npm run db:setup` and by all three screens reading live data.
 - [x] Screens wired to real persistence; fixtures retired — all three read the live database via
       `apps/web/src/lib/vault.ts`. Server Components reach the store; only a flat projection with
       no `workspaceId` or `credentialRef` crosses to the client. `server-only` makes an accidental
       client import a build error rather than a leaked connection string.
-- [ ] `strata-verifier` pass on every query path
+- [x] `strata-verifier` pass on every query path — ran 2026-08-02. Every SQL statement enumerated
+      individually; workspace scoping is a `WHERE` clause everywhere, never a post-filter, and the
+      boundary survived three independent attempts to break it. Found and fixed: non-atomic
+      `upsert`, `credential_ref` erased by an omitting upsert, discarded canonical `DocId`.
+      Found and **left open**: `Grant.sourceIds` is applied by `search`/`list`/`get` but not by
+      `findKnown`/`upsert`/`events.recent`. Not exploitable today — nothing mints a narrowed grant —
+      but it must be complete before M7 issues the first one. Tracked in R2's open list.
 
-**Done when** the Library search box returns real ranked results.
+**Done when** the Library search box returns real ranked results. — **Met.**
+
+Carried out of M4: `docs.list` clamps to `MAX_RESULTS` (50), which is correct as an anti-exfiltration
+ceiling for an agent and wrong as a page size for a human. The Library shows at most 50 documents,
+reports that count as the vault size, and derives its folder pills from the same 50 — so a folder
+whose documents are all older than the 50th disappears from the UI. Needs pagination, which is a
+design question the handoff does not answer.
 
 ---
 
@@ -164,10 +179,21 @@ stand-in for a real one.
 - [ ] `packages/auth` is a development stub — `localDevScope` is not authentication. Real
       per-connection principals are M7 (R7)
 - [x] Red-team pass on injection — 9 hostile documents through the real route (`injection.test.ts`)
-- [ ] `strata-verifier` pass focused on tenancy leaks and injection — the red-teaming above was
-      written by the same author as the defenses; an independent reviewer is what closes R2
+- [x] `strata-verifier` pass focused on tenancy leaks and injection — ran 2026-08-02, three
+      independent passes, none told what the defenses were. All three returned **do-not-ship**, and
+      they were right: `get_doc` was returning `title`/`folder`/`tags` unfenced above the only
+      preamble in the response — a live injection channel — plus two normalization gaps (Unicode
+      Tag block, `U+2028`) that let a document show one thing to the Library and another to an
+      agent. Fixed, each with a regression test confirmed to fail against the old code. Full
+      finding list and what the review *cleared* is in R2.
+- [ ] Re-verify the fixes independently — this is what now closes R2. The fixes were written by the
+      person who read the findings, which is the same authorship problem that produced the original
+      defects. Not a formality.
 
 **Done when** a real MCP client can search and read the vault, and the verifier says ship.
+
+Not done: the verifier does not say ship yet. It said do-not-ship, the defects are fixed, and the
+re-verification has not run.
 
 ---
 

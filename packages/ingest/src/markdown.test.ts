@@ -16,7 +16,14 @@ import {
   type FileSystemPort,
   type FileStat,
 } from './fs-port.ts';
-import { canonicalize, contentHash, scanMarkdown, toExternalId, MarkdownError } from './markdown.ts';
+import {
+  canonicalize,
+  contentHash,
+  scanMarkdown,
+  toExternalId,
+  MarkdownError,
+  MAX_EXCERPT,
+} from './markdown.ts';
 import { runIngest, type KnownDoc } from './pipeline.ts';
 
 const SRC = 'src-markdown' as SourceId;
@@ -256,4 +263,51 @@ test('failures are emitted as events with a fixed message, never the raw error',
   assert.equal(failed?.error?.message, 'The YAML frontmatter could not be parsed.');
   assert.ok(!failed?.error?.message.includes('['), 'no offending source text in the message');
   assert.equal(failed?.docId, undefined, 'a failure before a Doc existed has no docId');
+});
+
+// --- bounds and collisions found by independent review -----------------------------------------
+
+test('a frontmatter description is capped, not trusted to be excerpt-sized', async () => {
+  // The heuristic path always sliced; this one did not, and `description:` is attacker-controlled
+  // up to the 2 MiB file cap. That turned search_docs — "metadata and excerpts only, never
+  // document bodies" — into a body-sized channel, multiplied by MAX_RESULTS rows.
+  const { pending } = await scan({
+    'big.md': { text: `---\ndescription: "${'A'.repeat(5000)}"\n---\n\n# Doc\n\nprose` },
+  });
+
+  assert.equal(pending[0]?.excerpt.value.length, MAX_EXCERPT);
+  assert.equal(pending[0]?.excerpt.provenance, 'source', 'still attributed to the author');
+});
+
+test('two files colliding on one externalId fail loudly instead of overwriting each other', async () => {
+  // toExternalId folds backslashes (tested above, and correct for Windows-authored paths), so a
+  // literal `a\b.md` and a real `a/b.md` normalize to the same identifier. Different content means
+  // different hashes, so a run guard keyed on the full triple missed and BOTH were decided `new` —
+  // the second silently upserted over the first, and every later run flip-flopped the surviving
+  // row between the two documents forever.
+  const { pending, failures } = await scan({
+    'a/b.md': { text: '# Alpha\n\nfirst document' },
+    'a\\b.md': { text: '# Bravo\n\nsecond, entirely different document' },
+  });
+  assert.equal(pending.length, 2, 'the scan legitimately produces two files');
+  assert.equal(pending[0]?.externalId, pending[1]?.externalId, 'which collide on identity');
+
+  const { decisions, counts, events } = await runFor(pending, failures);
+
+  assert.equal(decisions.length, 1, 'only the first claimant is written');
+  assert.equal(counts.new, 1);
+  assert.equal(counts.failed, 1, 'the loser is reported, never silently discarded');
+  const failed = events.filter((e) => e.status === 'failed');
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0]?.error?.code, 'duplicate-identity');
+});
+
+test('the same file enumerated twice is still a quiet duplicate, not a failure', async () => {
+  // The guard must distinguish "one file reached by two walks" from "two files, one identity".
+  // Treating the first as an error would make every legitimate re-walk noisy.
+  const { pending, failures } = await scan({ 'a.md': { text: '# A\n\nprose' } });
+  const { decisions, counts } = await runFor([...pending, ...pending], failures);
+
+  assert.equal(decisions.length, 1);
+  assert.equal(counts.failed, 0, 'identical bytes under one identity is not a collision');
 });

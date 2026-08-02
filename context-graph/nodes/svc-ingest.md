@@ -24,7 +24,11 @@ gap in R2 itself, since `search_docs` returns metadata derived from that same un
 
 The persist stage now exists (`packages/ingest/src/persist.ts`), closing the one gap ADR 0003 left
 open because `svc-storage` did not exist yet. It is a separate module from `pipeline.ts` on purpose:
-the decision logic stays free of any storage dependency and testable on its own.
+the decision logic stays free of any storage dependency and testable on its own. M4 fixes: the
+per-run dedupe guard is now keyed on the (sourceId, externalId) PAIR instead of the full triple
+(packages/ingest/src/pipeline.ts), so two different files normalizing to one externalId no longer
+silently overwrite each other. `persistDecisions` returns a `reconciled` map and `persistIngest`
+rewrites affected ImportEvent.docId values, so events can no longer point at rows that do not exist.
 
 `unchanged` rows are skipped rather than re-upserted. Re-writing them is harmless for correctness —
 the upsert is idempotent — but it would rewrite `updated_at` and the search vector on every scan,

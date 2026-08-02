@@ -94,13 +94,44 @@ export async function runIngest(input: RunIngestInput): Promise<IngestResult> {
   const counts = { new: 0, unchanged: 0, changed: 0, failed: 0 };
 
   // Guards against the same file being enumerated twice within one run — a different job from the
-  // pair lookup, and the one `docIdentityKey`'s full triple is actually for.
-  const seenThisRun = new Set<string>();
+  // pair lookup.
+  //
+  // Keyed on the PAIR, not the full triple. The triple was the bug: two genuinely different files
+  // that normalize to one `externalId` (a literal `a\b.md` beside a real `a/b.md`, since
+  // `toExternalId` folds backslashes; or NFC/NFD variants of one filename) have different content
+  // hashes, so the triple key missed and BOTH were decided `new`. The second then upserted over the
+  // first — 4 files in, `new: 4`, zero failures reported, 2 rows stored. Worse, it never converged:
+  // each later run rewrote the surviving row with the other file's title and body, flip-flopping
+  // forever and burning an `updated` event every time.
+  //
+  // Two files claiming one identity is an error, not something to silently resolve in favour of
+  // whichever was enumerated last. The first wins and the rest are reported as failures — visible
+  // in `import_events`, and never a silent deletion.
+  const seenThisRun = new Map<string, string>();
 
   for (const pending of input.pending) {
-    const runKey = `${pending.sourceId}/${pending.externalId}/${pending.contentHash}`;
-    if (seenThisRun.has(runKey)) continue;
-    seenThisRun.add(runKey);
+    const runKey = `${pending.sourceId}/${pending.externalId}`;
+    const already = seenThisRun.get(runKey);
+    if (already !== undefined) {
+      // Same bytes twice (the same file reached by two walks) is a duplicate to skip quietly.
+      // Different bytes under one identity is a collision, and it must not be silent.
+      if (already !== pending.contentHash) {
+        counts.failed++;
+        events.push({
+          id: mintEventId(),
+          workspaceId,
+          sourceId: input.sourceId,
+          status: 'failed',
+          error: {
+            code: 'duplicate-identity',
+            message: MARKDOWN_ERRORS['duplicate-identity'],
+          },
+          occurredAt: input.now,
+        });
+      }
+      continue;
+    }
+    seenThisRun.set(runKey, pending.contentHash);
 
     const known = await input.lookup(pending.sourceId, pending.externalId);
     const outcome: Outcome =

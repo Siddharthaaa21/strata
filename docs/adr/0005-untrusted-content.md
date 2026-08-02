@@ -41,17 +41,56 @@ Why type it rather than fence at the boundary: the boundary moves. Today it is t
 tomorrow it is a summarizer, a related-docs feature, an "Ask agent about this" call. A type
 follows the value into all of them.
 
+> **Correction, 2026-08-02, after independent review.** The paragraph above overstated what the
+> type does, and the overstatement had a cost: `get_doc` shipped returning `title`, `folder`, and
+> `tags` unfenced, and nothing failed to compile.
+>
+> `Untrusted<T>` is `T & {witness}`, which is **assignable to `T`**. A handler that never discharges
+> the marker still typechecks. The lint rule bans *constructing* the witness, not *forgetting to
+> discharge* it — so the type catches "someone invented untrusted data out of thin air" and does not
+> catch "someone returned untrusted data without fencing it", which is the failure that actually
+> happened. The marker also does not survive the storage round trip: `Doc.title` is a plain `string`
+> in `packages/core`, so the store hands back unmarked values regardless.
+>
+> Enforcement is therefore **a chokepoint plus a test that inspects real output**, not a type:
+> `fenceResults` and `fenceDoc` are the only ways to build a response, and
+> `apps/mcp/src/fencing.test.ts` plants markers in every content-derived input and asserts every
+> occurrence in the serialized payload is either declared in `untrustedFields` or inside the nonce
+> envelope. That test fails for a *new* tool that forgets, which is the property this section
+> claimed the type would provide.
+>
+> The type stays. It is useful documentation at the ingest boundary and it makes the lint rule
+> possible. It is just not the guarantee — and the difference matters, because believing it was the
+> guarantee is why nobody wrote the test until a reviewer who had not written the defenses looked.
+
 ### 2. Normalize on the way in
 
 At ingest, before a value is stored:
 
 - **NFC normalize**, matching ADR 0003's path handling.
-- **Strip Unicode bidi control characters** (`U+202A`–`U+202E`, `U+2066`–`U+2069`). These reorder
-  rendered text without changing the bytes a model reads — the Trojan Source attack. A human
-  reviewing a doc in the Library sees one thing; the agent reads another.
+- **Strip Unicode bidi control characters** (`U+202A`–`U+202E`, `U+2066`–`U+2069`, and — added
+  2026-08-02 — `U+061C`, `U+200E`, `U+200F`). These reorder rendered text without changing the
+  bytes a model reads — the Trojan Source attack. A human reviewing a doc in the Library sees one
+  thing; the agent reads another.
 - **Strip zero-width characters** (`U+200B`–`U+200D`, `U+FEFF`) except where they are legitimately
   needed, which for engineering Markdown is nowhere.
+- **Strip the Unicode Tag block** (`U+E0000`–`U+E007F`) — added 2026-08-02. Every codepoint in it is
+  default-ignorable, so an instruction encoded one codepoint per character renders as *nothing at
+  all* while remaining ordinary text in a model's token stream. This is the canonical ASCII-
+  smuggling carrier and it is the purest possible instance of what this section exists to prevent:
+  the Library shows a clean title, the agent reads the payload. The original set missed it.
+- **Strip `U+2028` and `U+2029`** — added 2026-08-02, and this one is structural rather than
+  cosmetic. They are the only line terminators `JSON.stringify` does **not** escape. Section 3's
+  metadata fence rests entirely on untrusted text arriving as a JSON *value*, where `\n` becomes the
+  two characters `\` and `n` and therefore cannot produce a free-standing line. `U+2028` passed
+  through raw and defeated exactly that. Stripped rather than folded to LF: nothing in Markdown
+  legitimately uses it.
 - **Strip C0/C1 control characters** except tab and newline.
+
+The last three entries were added after an independent reviewer broke the original set. Ranges are
+declared as codepoint numbers in `packages/core/src/untrusted.ts` and compiled into one regex —
+never written as literal characters in source, which for `U+2028` is not merely a style rule: it is
+a JavaScript line terminator, so a literal one inside a regex literal is a syntax error.
 
 This is not injection prevention. It removes the ability to hide an injection from the human who
 would otherwise notice it in the UI, which is a different and achievable goal.

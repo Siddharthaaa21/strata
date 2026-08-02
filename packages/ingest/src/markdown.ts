@@ -19,6 +19,7 @@ export const MARKDOWN_ERRORS = {
   'frontmatter-invalid': 'The YAML frontmatter could not be parsed.',
   'path-invalid': 'The file path is not usable as a stable identifier.',
   'unsupported-type': 'The file extension is not an ingestible Markdown type.',
+  'duplicate-identity': 'Another file in this import already claims this identifier.',
 } as const;
 
 export type MarkdownErrorCode = keyof typeof MARKDOWN_ERRORS;
@@ -133,13 +134,24 @@ export function deriveTitle(origin: RawOrigin, body: string): string {
 }
 
 /**
+ * Upper bound on a stored excerpt, applied to BOTH derivation paths.
+ *
+ * The heuristic path always had it; the frontmatter path did not, and `description:` is
+ * attacker-controlled and bounded only by the 2 MiB file cap. That made `search_docs` — whose own
+ * description promises "metadata and excerpts only, never document bodies" — a channel for
+ * body-sized prose, through the weaker of the two fences and multiplied by MAX_RESULTS rows. The
+ * cap is what makes that promise true rather than aspirational.
+ */
+export const MAX_EXCERPT = 280;
+
+/**
  * Excerpt: frontmatter description/summary (`source`), else the first prose block (`heuristic`).
  * Code fences, HTML, tables, and headings are skipped; links are reduced to their text.
  */
 export function deriveExcerpt(origin: RawOrigin, body: string): Derived<string> {
   const at = origin.modifiedAt;
   if (origin.declaredSummary) {
-    return { value: origin.declaredSummary, provenance: 'source', derivedAt: at };
+    return { value: origin.declaredSummary.slice(0, MAX_EXCERPT), provenance: 'source', derivedAt: at };
   }
 
   const withoutFences = body.replace(/```[\s\S]*?```/g, '');

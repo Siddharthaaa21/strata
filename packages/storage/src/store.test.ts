@@ -20,6 +20,7 @@ import type {
   WorkspaceId,
 } from '@strata/core';
 import { createDocStore, migrate, MAX_RESULTS, type SqlDriver, type UpsertDocInput } from './index.ts';
+import { createSourceStore } from './sources.ts';
 
 const WS_A = 'ws-alpha' as WorkspaceId;
 const WS_B = 'ws-beta' as WorkspaceId;
@@ -283,4 +284,85 @@ test('get throws NotFound when the Grant excludes the doc’s source', async () 
     (e: Error) => e.message,
   );
   assert.equal(denied, 'NotFound', 'assertVisible must re-check the grant, not just the workspace');
+});
+
+// --- atomicity and credential preservation, found by independent review ------------------------
+
+test('upsert writes the doc and its body in a single statement', async () => {
+  // This was two sequential queries and therefore not atomic. A connection lost between them left
+  // a row in `docs` with none in `doc_bodies`: searchable, listed in the Library, and throwing
+  // NotFound on every read, permanently — and unrepairable by retry, because findKnown saw the
+  // stored content_hash, the pipeline decided `unchanged`, and persist skipped the write.
+  //
+  // A CTE rather than BEGIN/COMMIT because a pg.Pool can route two `query` calls to two different
+  // connections, so `pool.query('BEGIN')` would open a transaction the next statement never sees.
+  // One statement gets atomicity from Postgres's implicit per-statement transaction instead, on
+  // every driver shape fromPoolLike accepts.
+  const { db } = await freshStore();
+  let queries = 0;
+  const counting: SqlDriver = {
+    query: (sql, params) => {
+      queries++;
+      return db.query(sql, params);
+    },
+    exec: (sql) => db.exec(sql),
+  };
+
+  await createDocStore(counting).upsert(scopeFor(WS_A), doc());
+  assert.equal(queries, 1, 'two statements cannot be atomic without a transaction');
+});
+
+test('a failed upsert leaves no bodyless document behind', async () => {
+  const { db } = await freshStore();
+  const failing: SqlDriver = {
+    query: (sql, params) => {
+      if (sql.includes('doc_bodies')) throw new Error('connection lost');
+      return db.query(sql, params);
+    },
+    exec: (sql) => db.exec(sql),
+  };
+
+  await assert.rejects(() => createDocStore(failing).upsert(scopeFor(WS_A), doc()));
+
+  const { rows } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM docs');
+  assert.equal(rows[0]?.n, 0, 'the metadata row must not survive a failed body write');
+});
+
+test('the body is readable immediately after upsert — both rows land together', async () => {
+  const { store } = await freshStore();
+  const id = await store.upsert(scopeFor(WS_A), doc({ body: 'the whole body' }));
+  const got = await store.get(scopeFor(WS_A), id);
+  assert.equal(got.body, 'the whole body');
+});
+
+test('an upsert that omits credentialRef does not erase a stored one', async () => {
+  // scripts/ingest.mjs upserts the source on every run and never passes a credential, so a
+  // Markdown ingest against a connector's source id nulled that connector's credential reference.
+  // Every other column here is re-derivable from the next scan; this one is not.
+  const { db } = await freshStore();
+  const sources = createSourceStore(db);
+  const scope = scopeFor(WS_A);
+
+  await sources.upsert(scope, {
+    id: SRC_GITHUB,
+    kind: 'github',
+    name: 'GitHub',
+    description: 'Docs from the monorepo',
+    status: 'connected',
+    credentialRef: 'vault://oauth/gh/9f21',
+  });
+
+  await sources.upsert(scope, {
+    id: SRC_GITHUB,
+    kind: 'markdown',
+    name: 'Local Markdown',
+    description: 'Markdown ingested from notes',
+    status: 'connected',
+  });
+
+  const { rows } = await db.query<{ credential_ref: string | null }>(
+    'SELECT credential_ref FROM sources WHERE workspace_id = $1 AND id = $2',
+    [WS_A, SRC_GITHUB],
+  );
+  assert.equal(rows[0]?.credential_ref, 'vault://oauth/gh/9f21', 'clearing a credential needs an explicit path');
 });

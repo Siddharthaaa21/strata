@@ -181,28 +181,51 @@ export function createDocStore(db: SqlDriver): DocStore {
     /**
      * Honors ADR 0003's provisional-id rule: `DO UPDATE` returns the *existing* row's id, so a
      * crash mid-persist followed by a retry converges on one row instead of double-writing.
+     *
+     * ONE statement, deliberately — the metadata row and the body row are written by a single
+     * data-modifying CTE rather than two sequential queries.
+     *
+     * This was two queries and it was not atomic. A connection lost between them (pooler timeout,
+     * failover, kill) left a document in `docs` with no row in `doc_bodies`: searchable, listed in
+     * the Library, and throwing `NotFound` on every `get_doc` and every Reader open, permanently.
+     * The retry could not repair it either — `findKnown` saw the already-written `content_hash`,
+     * the pipeline decided `unchanged`, and `persistDecisions` skipped the write. Only a manual
+     * `--reindex` fixed it, and nothing told the operator the state existed. ADR 0004's "a crash
+     * plus a retry converges" claim held for the row and failed for the pair.
+     *
+     * A CTE rather than BEGIN/COMMIT because `SqlDriver` is deliberately a bare `query`, and a
+     * `pg.Pool` can route two `query` calls to two different connections — `pool.query('BEGIN')`
+     * would open a transaction on a connection the next statement never sees. Making the write a
+     * single statement gets atomicity from Postgres's implicit per-statement transaction instead,
+     * which is true for every driver shape `fromPoolLike` accepts, PGlite included.
      */
     async upsert(scope, input) {
       const { workspaceId } = scopeFilter(scope);
       const { rows } = await db.query<{ id: string }>(
-        `INSERT INTO docs (
-           workspace_id, id, source_id, external_id, content_hash, source_url,
-           title, excerpt, excerpt_prov, folder, folder_prov, tags, tags_prov,
-           created_at, updated_at, search_vector
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, ${SEARCH_VECTOR})
-         ON CONFLICT (workspace_id, source_id, external_id) DO UPDATE SET
-           content_hash = EXCLUDED.content_hash,
-           source_url   = EXCLUDED.source_url,
-           title        = EXCLUDED.title,
-           excerpt      = EXCLUDED.excerpt,
-           excerpt_prov = EXCLUDED.excerpt_prov,
-           folder       = EXCLUDED.folder,
-           folder_prov  = EXCLUDED.folder_prov,
-           tags         = EXCLUDED.tags,
-           tags_prov    = EXCLUDED.tags_prov,
-           updated_at   = EXCLUDED.updated_at,
-           search_vector = EXCLUDED.search_vector
-         RETURNING id`,
+        `WITH upserted AS (
+           INSERT INTO docs (
+             workspace_id, id, source_id, external_id, content_hash, source_url,
+             title, excerpt, excerpt_prov, folder, folder_prov, tags, tags_prov,
+             created_at, updated_at, search_vector
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, ${SEARCH_VECTOR})
+           ON CONFLICT (workspace_id, source_id, external_id) DO UPDATE SET
+             content_hash = EXCLUDED.content_hash,
+             source_url   = EXCLUDED.source_url,
+             title        = EXCLUDED.title,
+             excerpt      = EXCLUDED.excerpt,
+             excerpt_prov = EXCLUDED.excerpt_prov,
+             folder       = EXCLUDED.folder,
+             folder_prov  = EXCLUDED.folder_prov,
+             tags         = EXCLUDED.tags,
+             tags_prov    = EXCLUDED.tags_prov,
+             updated_at   = EXCLUDED.updated_at,
+             search_vector = EXCLUDED.search_vector
+           RETURNING id
+         )
+         INSERT INTO doc_bodies (workspace_id, doc_id, body)
+         SELECT $1, upserted.id, $16::text FROM upserted
+         ON CONFLICT (workspace_id, doc_id) DO UPDATE SET body = EXCLUDED.body
+         RETURNING doc_id AS id`,
         [
           workspaceId,
           input.id,
@@ -219,21 +242,15 @@ export function createDocStore(db: SqlDriver): DocStore {
           input.tags.provenance,
           input.createdAt,
           input.updatedAt,
-          // $16 — body, used ONLY to build search_vector at weight D. The body column stays in
-          // doc_bodies and is still never selected by search, so metadata-first retrieval holds.
+          // $16 — the body. Used twice now: to build search_vector at weight D, and as the
+          // doc_bodies value. The body column still lives only in doc_bodies and is still never
+          // selected by search, so metadata-first retrieval holds.
           input.body,
         ],
       );
 
       const storedId = rows[0]?.id as DocId | undefined;
       if (!storedId) throw new Error('upsert returned no id');
-
-      await db.query(
-        `INSERT INTO doc_bodies (workspace_id, doc_id, body) VALUES ($1,$2,$3)
-         ON CONFLICT (workspace_id, doc_id) DO UPDATE SET body = EXCLUDED.body`,
-        [workspaceId, storedId, input.body],
-      );
-
       return storedId;
     },
 

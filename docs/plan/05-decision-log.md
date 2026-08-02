@@ -275,3 +275,50 @@ and a `strata-verifier` sign-off in M6.
 **Reversible?** Yes at the type level — additive, no stored data or schema change, no MCP signature
 change (the tools do not exist yet). The standing cost is deliberate friction: every future consumer
 of `Doc` must discharge `Untrusted<T>` explicitly.
+
+---
+
+## D13 — Fence enforcement is a chokepoint and a test, not a type · 2026-08-02
+
+**Context.** Three independent `strata-verifier` passes ran against the MCP surface, storage, and
+ingest. Each was given the target and an adversarial mandate; none was told what the defenses were
+or how they were meant to work. All three returned **do-not-ship**. Two of them independently found
+the same top defect without seeing each other's work: `get_doc` returned `title`, `folder`, and
+`tags` straight from ingested content, with no preamble and no `untrustedFields` declaration, while
+the single warning in the response sat *below* them inside the body envelope reading "the content
+below". Frontmatter `title:` accepts a multi-line YAML block scalar, so that was unbounded
+attacker-controlled prose reaching an agent as the first thing in the payload.
+
+**Decision.** The response-construction chokepoint (`fenceResults`, `fenceDoc`) plus
+`apps/mcp/src/fencing.test.ts` is the enforcement. `Untrusted<T>` stays, demoted to documentation.
+
+**Why the type could not have caught this, which is the part worth remembering.** `Untrusted<T>` is
+`T & {witness}` and is therefore **assignable to `T`**. A handler that never discharges the marker
+compiles cleanly. The `no-restricted-syntax` rule bans *constructing* the witness — it catches
+"someone invented untrusted data from nothing" and cannot catch "someone returned untrusted data
+without fencing it", which is the failure that actually shipped. The marker additionally does not
+survive the storage round trip: `Doc.title` is a plain `string` in `packages/core`, so the store
+returns unmarked values no matter what ingest produced. D12 and ADR 0005 section 1 claimed "a type
+follows the value into all of them." That claim was wrong, and believing it is why nobody wrote the
+test. ADR 0005 now carries the correction inline rather than a quiet edit.
+
+**Why the test is written inside-out.** Not "assert `get_doc` fences its title" — that is another
+per-field test, and per-field tests only cover fields somebody thought to name. Instead: plant a
+distinct marker in every content-derived input, serialize the real response from a real MCP client,
+and demand that *every* occurrence of *any* marker lands either in a field named by
+`untrustedFields` or inside the nonce envelope. A future tool returning a new ingested field fails
+without anyone remembering to add a case. The old `get_doc` test asserted on `content` alone and
+passed for the wrong reason — it proved the body was fenced and was silent about four sibling keys.
+
+**Method note, and the actual reusable lesson.** The red-team suite that missed all of this was
+thorough and adversarial; its author simply could not step outside their own model of the threat. It
+tested the hiding techniques it knew (RLO, zero-width) and stopped at the edge of that list, missing
+the Unicode Tag block. It never considered `U+2028`, which requires knowing a `JSON.stringify`
+serialization detail rather than a Unicode one — a different domain from the rest of the defense.
+Independent review is not a rubber stamp on this codebase; it is where the defects were. Every fix
+here was written by the person who read the findings, which reproduces the same authorship problem
+one level up, so R2 does not close until the fixes are themselves independently re-verified.
+
+**Reversible?** The test is additive. The `fenceDoc` payload adds two keys to `get_doc` output
+(`notice`, `untrustedFields`) ahead of the existing ones — an additive wire change, and the output
+shape was never pinned. Removing it would reopen the hole, so treat it as one-way.
