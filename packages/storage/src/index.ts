@@ -17,6 +17,8 @@ import {
   type SourceId,
   type Visible,
   type WorkspaceId,
+  requireSourceInGrant,
+  isSourceInGrant,
 } from '@strata/core';
 
 export * from './driver.ts';
@@ -200,6 +202,9 @@ export function createDocStore(db: SqlDriver): DocStore {
      * which is true for every driver shape `fromPoolLike` accepts, PGlite included.
      */
     async upsert(scope, input) {
+      // The grant gates writes, not only reads (ADR 0006 section 6). Without this a principal
+      // narrowed to source A could inject a document into source B that it cannot itself read.
+      requireSourceInGrant(scope, input.sourceId);
       const { workspaceId } = scopeFilter(scope);
       const { rows } = await db.query<{ id: string }>(
         `WITH upserted AS (
@@ -255,6 +260,11 @@ export function createDocStore(db: SqlDriver): DocStore {
     },
 
     async findKnown(scope, sourceId, externalId) {
+      // Returns undefined rather than throwing: out-of-grant must be indistinguishable from
+      // not-known. This method hands back {docId, contentHash}, so an unguarded version was both an
+      // existence oracle and a content-confirmation oracle — hash a candidate file, ask, and learn
+      // whether that exact content sits in a source you are not allowed to read.
+      if (!isSourceInGrant(scope, sourceId)) return undefined;
       const { workspaceId } = scopeFilter(scope);
       const { rows } = await db.query<{ id: string; content_hash: string }>(
         `SELECT id, content_hash FROM docs

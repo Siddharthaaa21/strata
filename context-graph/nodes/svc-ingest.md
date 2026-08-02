@@ -5,7 +5,7 @@ title: Ingestion pipeline
 status: planned
 owner: ingest
 spec: .claude/agents/strata-ingest-engineer.md
-depends_on: [contract-doc, contract-source, contract-import-event, dec-tenancy, risk-injection, svc-storage]
+depends_on: [contract-doc, contract-source, contract-import-event, dec-tenancy, risk-injection, svc-storage, dec-auth]
 ---
 
 fetch (per-source adapter) → raw → normalize (shared) → dedupe → persist → ImportEvent. Adapters
@@ -14,6 +14,12 @@ not optional — every source is assumed to deliver at least once and out of ord
 
 `dec-tenancy`: ingestion is where `workspaceId` gets stamped onto `Doc`/`Source`/`ImportEvent`,
 derived from an authenticated `Scope`, never a hand-passed string (ADR 0003).
+
+An ingest run authenticates as a `kind:'service'` principal whose Grant names the sources it imports
+into. This closes ADR 0003 open item 3 (dec-auth): `sourceIds` is the set of sources a principal may
+read from *and* write to — one dimension, both directions. No `capabilities: ('read'|'write')[]` axis;
+one write caller, one read caller class (the MCP server, read-only by design). All store writes are
+gated by Grant.sourceIds (guarantee-grant-completeness).
 
 `risk-injection` here means "read R2 before writing adapter code," not "blocked on R2" — node
 `status` carries blocking, not `depends_on` edges (R2's own entry says it blocks M6 specifically).

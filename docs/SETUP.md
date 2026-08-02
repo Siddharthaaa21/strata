@@ -86,9 +86,20 @@ development stub: anything able to start the process gets the configured workspa
 credential, no verification, and no revocation.
 
 That is fine for a local single-user vault. It is **not** acceptable for anything shared or hosted.
-Real per-connection principals are M7 (see R7 in the risk register). Do not deploy this to a shared
-environment on the assumption that the tenancy model protects you — the tenancy model is sound, but
-nothing authenticates the caller yet.
+Do not deploy this to a shared environment on the assumption that the tenancy model protects you —
+the tenancy model is sound, but nothing authenticates the caller yet.
+
+**The design now exists**: `docs/adr/0006-authentication.md` decides it, and its increment 0 has
+landed — `Grant.sourceIds` gates every store method, reads and writes alike, so a narrowed grant
+means something before one is ever issued. Increment 1 (agent tokens over stdio) is what makes the
+sentence above stop being true. Until it ships, this section stands as written.
+
+One thing that ADR is explicit about and is worth knowing before you wire anything up: even once
+agent tokens exist, a token in a **stdio** client config buys attribution, per-agent scoping, and
+revocation — but **not** confidentiality. This server reads `DATABASE_URL` itself (deliberately, so
+your client config holds no secret), so anything that can launch it can reach the database directly.
+Containment arrives with remote transport, where the server holds the credential and the client
+does not.
 
 ---
 

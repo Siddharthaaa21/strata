@@ -109,6 +109,30 @@ function inGrant(scope: Scope, sourceId: SourceId): boolean {
   return scope.grant.sourceIds === undefined || scope.grant.sourceIds.includes(sourceId);
 }
 
+/**
+ * Gates a WRITE (or a keyed lookup) on the grant's source narrowing.
+ *
+ * `Grant.sourceIds` is one dimension covering both directions — a principal may read from and write
+ * to exactly the sources it names (ADR 0006 section 6, closing ADR 0003 open item 3).
+ *
+ * Narrowing reads but not writes would leave a **write-only channel**: a principal scoped to source
+ * A could upsert into source B, injecting a document it cannot itself read, which every other member
+ * of the workspace then reads and the MCP server then serves to every other agent. That is R2's
+ * threat with the roles reversed — R2 asks what ingested content can do to a reader, this asks who
+ * is allowed to be the ingester.
+ *
+ * Throws the same bare `'NotFound'` every other denial uses. A distinct `'Forbidden'` would confirm
+ * that the source exists, which is the enumeration oracle the MCP surface is built to avoid.
+ */
+export function requireSourceInGrant(scope: Scope, sourceId: SourceId): void {
+  if (!inGrant(scope, sourceId)) throw new Error('NotFound');
+}
+
+/** Non-throwing form, for lookups whose "no" is an absent result rather than an error. */
+export function isSourceInGrant(scope: Scope, sourceId: SourceId): boolean {
+  return inGrant(scope, sourceId);
+}
+
 /** Re-checks a row against a `Scope`. Does not throw — callers decide what "not visible" means. */
 export function isVisible(
   scope: Scope,
