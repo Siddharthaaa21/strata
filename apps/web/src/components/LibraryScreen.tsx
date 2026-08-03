@@ -8,6 +8,6 @@ import { LibraryView } from './LibraryView';
  * the client. Fixtures are retired (D8's fixture-driven pass is over) — this reads the real vault.
  */
 export async function LibraryScreen() {
-  const { docs, sources } = await loadLibrary();
-  return <LibraryView docs={docs} sources={sources} />;
+  const { docs, sources, total, folders } = await loadLibrary();
+  return <LibraryView docs={docs} sources={sources} total={total} folders={folders} />;
 }

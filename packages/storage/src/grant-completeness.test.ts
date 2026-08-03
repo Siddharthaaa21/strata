@@ -123,7 +123,10 @@ type Stores = Awaited<ReturnType<typeof seeded>>;
  */
 const CALLS: Record<
   string,
-  Record<string, { readonly expect: 'throws' | 'empty'; call(s: Stores, scope: Scope): Promise<unknown> }>
+  Record<
+    string,
+    { readonly expect: 'throws' | 'empty' | 'zero'; call(s: Stores, scope: Scope): Promise<unknown> }
+  >
 > = {
   docs: {
     upsert: { expect: 'throws', call: (s, sc) => s.docs.upsert(sc, doc(SECRET, 'doc-injected')) },
@@ -131,6 +134,11 @@ const CALLS: Record<
     search: { expect: 'empty', call: (s, sc) => s.docs.search(sc, 'document') },
     list: { expect: 'empty', call: (s, sc) => s.docs.list(sc) },
     get: { expect: 'throws', call: (s, sc) => s.docs.get(sc, 'doc-secret' as DocId) },
+    // These two exist because the Library must not report a page size as the vault size. They are
+    // aggregates, so "leaked nothing" is a value assertion rather than a marker sweep: a count of 1
+    // discloses that an out-of-grant document exists just as surely as returning it would.
+    count: { expect: 'zero', call: (s, sc) => s.docs.count(sc) },
+    folders: { expect: 'zero', call: (s, sc) => s.docs.folders(sc) },
   },
   sources: {
     upsert: {
@@ -196,6 +204,13 @@ for (const narrowing of [
             (e: Error) => e.message === 'NotFound',
             `${storeName}.${method} must reject a narrowed grant with a bare NotFound`,
           );
+        } else if (entry.expect === 'zero') {
+          // An aggregate cannot leak a marker, so the assertion is on the value: a non-zero count
+          // or a non-empty folder list discloses that out-of-grant documents exist, which is the
+          // same disclosure returning them would be.
+          const result = await entry.call(stores, scope);
+          const size = typeof result === 'number' ? result : (result as unknown[]).length;
+          assert.equal(size, 0, `${storeName}.${method} disclosed out-of-grant rows via an aggregate`);
         } else {
           assertNothingSecret(await entry.call(stores, scope), `${storeName}.${method}`);
         }

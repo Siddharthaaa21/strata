@@ -381,3 +381,48 @@ test('an upsert that omits credentialRef does not erase a stored one', async () 
   );
   assert.equal(rows[0]?.credential_ref, 'vault://oauth/gh/9f21', 'clearing a credential needs an explicit path');
 });
+
+test('count and folders describe the vault, not the clamped page', async () => {
+  // The Library rendered `rows.length` as "N docs" and derived its filter pills from the same rows.
+  // With MAX_RESULTS = 50, a workspace with more than that reported the page size as the vault size,
+  // and any folder whose documents all fell outside the newest page had no pill — so the control
+  // that would have revealed them was hidden by the same truncation that hid them.
+  const { store } = await freshStore();
+  const scope = scopeFor(WS_A);
+
+  for (let i = 0; i < MAX_RESULTS + 12; i++) {
+    await store.upsert(
+      scope,
+      doc({
+        id: `doc-${i}` as DocId,
+        externalId: `notes/${i}.md`,
+        contentHash: `sha256:${i}`,
+        // The oldest documents get their own folder, so they fall outside the newest page.
+        folder: authored(i < 5 ? 'Archive' : 'Architecture'),
+        updatedAt: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+      }),
+    );
+  }
+
+  const page = await store.list(scope);
+  assert.equal(page.length, MAX_RESULTS, 'list is still clamped — that part is deliberate');
+  assert.equal(await store.count(scope), MAX_RESULTS + 12, 'count sees past the clamp');
+
+  // The decisive one: 'Archive' is not represented in the newest page at all.
+  assert.ok(!page.some((d) => d.folder === 'Archive'), 'the setup actually pushes Archive off the page');
+  assert.deepEqual([...(await store.folders(scope))], ['Architecture', 'Archive'].sort());
+});
+
+test('count respects a folder filter and a narrowed grant', async () => {
+  const { store } = await freshStore();
+  await store.upsert(scopeFor(WS_A), doc({ id: 'a' as DocId, externalId: 'a.md', folder: authored('X') }));
+  await store.upsert(
+    scopeFor(WS_A),
+    doc({ id: 'b' as DocId, externalId: 'b.md', folder: authored('Y'), sourceId: SRC_GITHUB }),
+  );
+
+  assert.equal(await store.count(scopeFor(WS_A)), 2);
+  assert.equal(await store.count(scopeFor(WS_A), { folder: 'X' }), 1);
+  assert.equal(await store.count(scopeFor(WS_A, [SRC_GITHUB])), 1, 'the grant narrows the count too');
+  assert.equal(await store.count(scopeFor(WS_B)), 0, 'and the workspace boundary holds');
+});

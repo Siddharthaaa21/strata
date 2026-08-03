@@ -24,6 +24,12 @@ events.recent all enforce the same grant boundary as docs.search/list/get and so
 is held by guarantee-grant-completeness: an enumerating test that fails loudly on any store method with
 no declared narrowing behavior, catching new methods tomorrow without editing the test.
 
+Two new aggregate methods added to fix Library truncation: `count(scope, {folder?})` returns the true
+vault total, not the clamped page; `folders(scope)` returns every distinct folder in scope. Both apply
+the full scope filter (workspace AND Grant.sourceIds) in the WHERE clause, so they see past MAX_RESULTS
+but respect the grant boundary. Held complete by guarantee-grant-completeness with value assertions
+(a non-zero count discloses an out-of-grant doc as surely as returning it).
+
 Dec-auth increment 1 (DONE): New tables `principals`, `grants`, `agent_tokens` hold agent authentication state.
 Principal + grant + token created atomically via one data-modifying CTE (createAgent). Grants carry `source_ids`
 NULL (all sources) or '{}' (deny-all) or a set of source ids; partial unique index enforces at most one ACTIVE

@@ -17,19 +17,25 @@ const ALL = 'All';
 export function LibraryView({
   docs,
   sources,
+  total,
+  folders: allFolders,
 }: {
   docs: readonly DocListItem[];
   sources: readonly SourceListItem[];
+  /** Documents in scope. NOT `docs.length` — that is one clamped page. */
+  total: number;
+  /** Every folder in scope, queried separately so truncation cannot hide one. */
+  folders: readonly string[];
 }) {
   const sourcesById = useMemo(
     () => new Map(sources.map((s) => [s.id, s])),
     [sources],
   );
 
-  const folders = useMemo(
-    () => [ALL, ...[...new Set(docs.map((d) => d.folder))].sort()],
-    [docs],
-  );
+  // From the server's folder query, not from `docs`. Deriving pills from the page meant a folder
+  // whose documents were all older than the newest fifty had no pill — so the one control that
+  // would have surfaced them was itself hidden by the truncation that hid them.
+  const folders = useMemo(() => [ALL, ...allFolders], [allFolders]);
 
   const [activeFilter, setActiveFilter] = useState<string>(ALL);
   const visible = activeFilter === ALL ? docs : docs.filter((d) => d.folder === activeFilter);
@@ -41,11 +47,22 @@ export function LibraryView({
       <div>
         <h1 className={`serif ${styles.title}`}>Library</h1>
         <p className={styles.subtitle}>
-          {docs.length === 0
+          {total === 0
             ? 'No documents yet. Run `npm run ingest -- <folder>` to add some.'
-            : `${docs.length} ${docs.length === 1 ? 'doc' : 'docs'}${
+            : `${total} ${total === 1 ? 'doc' : 'docs'}${
                 connected.length ? ` from ${connected.join(', ')}` : ''
               }.`}
+          {/*
+            Stated rather than hidden. The list is one clamped page, and until this screen has a
+            pagination design — the handoff has none — the honest thing is to say which documents
+            are on screen. Silently showing 50 of 312 under a heading that says "312 docs" is worse
+            than either showing all of them or admitting the limit.
+          */}
+          {docs.length < total && (
+            <span className={styles.truncationNote}>
+              {' '}Showing the {docs.length} most recently updated.
+            </span>
+          )}
         </p>
       </div>
 
