@@ -2,7 +2,7 @@
 id: adapter-markdown
 kind: service
 title: Local Markdown ingest adapter
-status: in-progress
+status: done
 owner: ingest
 spec: docs/adr/0003-ingest-identity.md
 depends_on: [svc-ingest, contract-doc, contract-import-event, dec-tenancy, risk-injection, dec-untrusted-content]
@@ -18,11 +18,13 @@ network in the test suite. See ADR 0003 for the full design, its rejections, and
 (no provenance slot on `Doc.title`; R2's metadata-channel gap; write authorization unmodeled;
 rename/delete semantics undecided).
 
-Implementation in progress (M4 improvements). The filesystem is an injected port (ADR 0003): real
-temp-directory fixtures cannot portably produce EACCES, a broken symlink, or invalid UTF-8 — exactly
-the failure paths that most need testing. Symlinks are reported but never followed, in either
-direction, because a symlink out of the scan root is arbitrary-file-read and a cycle hangs the walk.
-Text is decoded strictly so a replacement character cannot silently corrupt content and its hash.
-MAX_EXCERPT (280) now applies to the frontmatter path too; it previously applied only to the
-heuristic path, leaving `description:` unbounded, making `search_docs` a channel for body-sized
-prose. Added the `duplicate-identity` error code for the per-run dedupe guard keying fix.
+The filesystem is an injected port (ADR 0003): real temp-directory fixtures cannot portably produce
+EACCES, a broken symlink, or invalid UTF-8 — exactly the failure paths that most need testing. Symlinks
+are reported but never followed, in either direction, because a symlink out of the scan root is arbitrary-file-read
+and a cycle hangs the walk. Text is decoded strictly so a replacement character cannot silently corrupt content and
+its hash. MAX_EXCERPT (280) now applies to the frontmatter path too; it previously applied only to the
+heuristic path, leaving `description:` unbounded, making `search_docs` a channel for body-sized prose.
+
+`canonicalize()` replaced quadratic `/\s*$/` regex with `.trimEnd() + '\n'`, fixing ReDoS where 2 MiB of trailing
+spaces would block the event loop for ~27 minutes. Identity behavior is unchanged and pinned by test. This fix
+closes the R2 open item on quadratic regexes in ingest.

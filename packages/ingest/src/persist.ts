@@ -8,6 +8,7 @@
 
 import type { DocId, Scope, SourceId } from '@strata/core';
 import type { DocStore } from '@strata/storage';
+import { MARKDOWN_ERRORS } from './markdown.ts';
 import type { Decision, IngestResult, KnownDocLookup } from './pipeline.ts';
 
 /** Adapts a `DocStore` to the lookup `runIngest` needs. Scope-filtered, like every store read. */
@@ -29,6 +30,19 @@ export interface PersistResult {
    * audit trail was wrong in the database and invisible in the UI at the same time.
    */
   readonly reconciled: ReadonlyMap<DocId, DocId>;
+  /**
+   * Documents whose write failed, by `externalId`.
+   *
+   * Persist used to fail the whole batch on the first error, which meant `scripts/ingest.mjs` never
+   * reached `events.append` and the run left **zero** rows in `import_events` — including for the
+   * documents that had already been written. The state was invisible in the database and in the
+   * Import screen simultaneously.
+   *
+   * Per-document tolerance mirrors what the scan stage already does: one unreadable file in a
+   * folder of two hundred must not lose the other hundred and ninety-nine. The difference is that a
+   * failure here is recorded rather than thrown away.
+   */
+  readonly failed: readonly { readonly externalId: string; readonly code: string }[];
 }
 
 /**
@@ -50,6 +64,7 @@ export async function persistDecisions(
   let written = 0;
   let skipped = 0;
   const reconciled = new Map<DocId, DocId>();
+  const failed: { externalId: string; code: string }[] = [];
 
   for (const decision of decisions) {
     if (decision.outcome === 'unchanged') {
@@ -58,26 +73,38 @@ export async function persistDecisions(
     }
 
     const { pending } = decision;
-    const storedId = await store.upsert(scope, {
-      id: decision.docId,
-      sourceId: pending.sourceId,
-      externalId: pending.externalId,
-      contentHash: pending.contentHash,
-      // Untrusted<string> is structurally a string; storage holds it as text and the MCP layer is
-      // what must fence it on the way back out (ADR 0005).
-      title: pending.title,
-      excerpt: { ...pending.excerpt, value: pending.excerpt.value },
-      folder: { ...pending.folder, value: pending.folder.value },
-      tags: { ...pending.tags, value: [...pending.tags.value] },
-      createdAt: pending.createdAt,
-      updatedAt: pending.updatedAt,
-      body: pending.body,
-    });
-    if (storedId !== decision.docId) reconciled.set(decision.docId, storedId);
-    written++;
+    try {
+      const storedId = await store.upsert(scope, {
+        id: decision.docId,
+        sourceId: pending.sourceId,
+        externalId: pending.externalId,
+        contentHash: pending.contentHash,
+        // Untrusted<string> is structurally a string; storage holds it as text and the MCP layer is
+        // what must fence it on the way back out (ADR 0005).
+        title: pending.title,
+        excerpt: { ...pending.excerpt, value: pending.excerpt.value },
+        folder: { ...pending.folder, value: pending.folder.value },
+        tags: { ...pending.tags, value: [...pending.tags.value] },
+        createdAt: pending.createdAt,
+        updatedAt: pending.updatedAt,
+        body: pending.body,
+      });
+      if (storedId !== decision.docId) reconciled.set(decision.docId, storedId);
+      written++;
+    } catch {
+      // Recorded and skipped, never rethrown. Throwing here aborted the run before
+      // `scripts/ingest.mjs` reached `events.append`, so a single failing document erased the audit
+      // trail for every document in the batch — including the ones already written.
+      //
+      // The caught error is deliberately discarded rather than surfaced: a driver error can carry
+      // SQL, column names, and fragments of the row it choked on, and `ImportEvent.error.message`
+      // is sanitized by contract (ADR 0003). The externalId identifies the file; the operator can
+      // re-run one document with far less risk than putting a raw exception into a stored message.
+      failed.push({ externalId: pending.externalId, code: 'persist-failed' });
+    }
   }
 
-  return { written, skipped, reconciled };
+  return { written, skipped, reconciled, failed };
 }
 
 /**
@@ -93,16 +120,44 @@ export async function persistIngest(
   result: IngestResult,
 ): Promise<IngestResult & PersistResult> {
   const persisted = await persistDecisions(scope, store, result.decisions);
-  if (persisted.reconciled.size === 0) return { ...result, ...persisted };
+  if (persisted.reconciled.size === 0 && persisted.failed.length === 0) {
+    return { ...result, ...persisted };
+  }
+
+  const failedIds = new Set(persisted.failed.map((f) => f.externalId));
 
   const events = result.events.map((e) => {
+    // A document that did not persist must not be recorded as `imported`. `runIngest` decided the
+    // status before the write happened — it is storage-free by construction — so this is the only
+    // stage that knows the difference, and an unrewritten event here is a success in the audit
+    // trail for a document that is not in the vault.
+    if (e.externalId !== undefined && failedIds.has(e.externalId) && e.status !== 'failed') {
+      // Rebuilt field by field rather than spread-minus-docId. `docId` must be absent, not merely
+      // overwritten with undefined, and an explicit shape makes it obvious that it is gone: a
+      // failed write claiming a document id points the audit trail at a row that does not exist.
+      return {
+        id: e.id,
+        workspaceId: e.workspaceId,
+        sourceId: e.sourceId,
+        externalId: e.externalId,
+        status: 'failed' as const,
+        error: { code: 'persist-failed', message: MARKDOWN_ERRORS['persist-failed'] },
+        occurredAt: e.occurredAt,
+      };
+    }
     const canonical = e.docId === undefined ? undefined : persisted.reconciled.get(e.docId);
     return canonical === undefined ? e : { ...e, docId: canonical };
   });
+
   const decisions = result.decisions.map((d) => {
     const canonical = persisted.reconciled.get(d.docId);
     return canonical === undefined ? d : { ...d, docId: canonical };
   });
 
-  return { ...result, decisions, events, ...persisted };
+  const counts = {
+    ...result.counts,
+    failed: result.counts.failed + persisted.failed.length,
+  };
+
+  return { ...result, decisions, events, counts, ...persisted };
 }

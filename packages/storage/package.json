@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@strata/core": "*",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "@strata/auth": "*"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4"

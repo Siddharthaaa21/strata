@@ -121,6 +121,9 @@ export async function runIngest(input: RunIngestInput): Promise<IngestResult> {
           id: mintEventId(),
           workspaceId,
           sourceId: input.sourceId,
+          // Names the file that LOST. Without it, "another file already claims this identifier" is
+          // advice the operator cannot act on across a large vault.
+          externalId: pending.externalId,
           status: 'failed',
           error: {
             code: 'duplicate-identity',
@@ -150,6 +153,7 @@ export async function runIngest(input: RunIngestInput): Promise<IngestResult> {
       workspaceId,
       sourceId: input.sourceId,
       docId,
+      externalId: pending.externalId,
       status: STATUS[outcome],
       occurredAt: input.now,
     });
@@ -161,6 +165,8 @@ export async function runIngest(input: RunIngestInput): Promise<IngestResult> {
       id: mintEventId(),
       workspaceId,
       sourceId: input.sourceId,
+      // The scan stage already knows which file failed; this is where that survives into storage.
+      externalId: failure.externalId,
       status: 'failed',
       // Fixed template keyed on the code. Never a caught exception's own message, and never the
       // file's content — `ImportEvent.error.message` is sanitized by contract.

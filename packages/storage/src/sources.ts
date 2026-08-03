@@ -6,6 +6,7 @@
  * would leak every connected account.
  */
 
+import { requireSourceInGrant } from '@strata/core';
 import { isVisible, scopeFilter, type Scope, type Source, type SourceId, type SourceKind, type WorkspaceId } from '@strata/core';
 import type { SqlDriver } from './index.ts';
 
@@ -46,6 +47,8 @@ export function createSourceStore(db: SqlDriver): SourceStore {
      * which is a disconnect operation, not a side effect of an unrelated write.
      */
     async upsert(scope, input) {
+      // A narrowed principal may not create or redefine a source outside its grant (ADR 0006 §6).
+      requireSourceInGrant(scope, input.id);
       const { workspaceId } = scopeFilter(scope);
       await db.query(
         `INSERT INTO sources (workspace_id, id, kind, name, description, status, last_sync_at, credential_ref)

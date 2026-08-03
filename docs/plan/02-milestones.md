@@ -197,12 +197,57 @@ re-verification has not run.
 
 ---
 
-## M7 — Agent Access screen
+## M7 — Authentication and the Agent Access screen
+
+Restructured into increments by `docs/adr/0006-authentication.md` (D14), which closed R7. The
+sequencing point: the vendor decision is last, so it never blocks the two increments that do not
+need it.
+
+**Increment 0 — complete the grant** `done`
+
+- [x] `Grant.sourceIds` gates all nine store methods, reads and writes alike. It gated four. The
+      write half resolves ADR 0003 open item 3: read-only narrowing leaves a write-only channel, and
+      a principal who can write into a source it cannot read is R2's threat with the roles reversed.
+- [x] `requireSourceInGrant` / `isSourceInGrant` in `packages/core`; denial is always a bare
+      `NotFound`, never a distinguishable `Forbidden`.
+- [x] `grant-completeness.test.ts` — enumerates the live store surface and fails on any method with
+      no declared narrowing behavior, so a method added later cannot quietly skip the grant.
+      Verified by adding an unregistered method and confirming the suite went red.
+
+**Increment 1 — agent tokens on stdio** `done`
+
+- [x] `principals`, `grants`, `agent_tokens` tables; `stra_at_<tokenId>_<secret>` format. A partial
+      unique index enforces at most one *active* grant per principal in the database rather than by
+      application discipline. `source_ids` NULL means all sources, `'{}'` means deny-all.
+- [x] `createAuthenticator` in `packages/auth`; `AuthStore` port declared there and implemented by
+      `packages/storage`, so auth never imports `pg`. One joined lookup per call, no cache.
+- [x] MCP server requires `STRATA_AGENT_TOKEN`; `STRATA_WORKSPACE_ID` removed from it — the
+      workspace comes from the token, and two sources of truth can disagree.
+- [x] `ReadonlyDocStore` — D5's "no mutating tool exists" is now true at the type level rather than
+      by the absence of a line of code (see R11 for the trigger to revisit).
+- [x] `npm run agent:create` mints an agent, its grant, and its first token atomically. The token
+      prints once and the script never writes it to a file.
+- [x] Proven live: `npm run mcp:smoke` mints an ephemeral agent, drives the real server over stdio,
+      then revokes mid-connection and asserts the next call returns `Unauthorized`. Revocation is
+      immediate with no restart — which is the property the Agent Access screen will promise.
+- [ ] CLI scripts (`ingest`, `search`) still use `localDevScope`; they move to `STRATA_CLI_TOKEN`
+      with increment 2, when that function is deleted.
+
+**Increment 2 — human sessions**
+
+- [ ] Supabase Auth; `user_identities`; `scopeFromSession`; `vault()` becomes async
+- [ ] `localDevScope` deleted — dev uses a real credential through the real path, never a second one
+
+**Increment 3 — the screen**
 
 - [ ] Design it — no handoff exists for this screen
-- [ ] Per-agent scoping UI, connection management, access log
+- [ ] Per-agent scoping UI, connection management, access log (same table as ADR 0005 §5's
+      unimplemented response logging — design once, not twice)
 
 **Done when** a user can see and revoke what each connected agent can reach.
+
+Until increment 1 lands, **there is still no authentication**, and that is the honest status
+regardless of increment 0 being green.
 
 ---
 

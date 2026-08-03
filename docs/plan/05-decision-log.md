@@ -362,3 +362,61 @@ property the code does not have is worse than silence, because it stops the next
 **Reversible?** The property framing is additive and cheap to keep. Reverting the enumeration in the
 fencing guard would silently restore a guard that only appears to generalize, which is the worst of
 the three states — treat it as one-way.
+
+---
+
+## D14 — Buy the login, build the agent tokens, and finish the grant first · 2026-08-02
+
+**Context.** R7 was the last thing keeping Strata on localhost. `packages/auth` exported
+`localDevScope`, a labelled stub: anything able to start the process got the configured workspace.
+
+**Decision.** `docs/adr/0006-authentication.md`. Human sessions bought (Supabase Auth), agent tokens
+built (`stra_at_<tokenId>_<secret>`, SHA-256 stored, one indexed lookup per call, no cache).
+Authorization never moves to the provider and the provider's subject id is never a `PrincipalId`.
+Delivered in four increments; increment 0 has landed.
+
+**Why buy one half and build the other.** They are different problems. Password reset, session
+fixation, MFA, and account recovery are a month of work and still probably wrong, and nothing about
+Strata's login is special. But no provider offers long-lived, individually revocable machine
+credentials whose authorization dimension is `Grant.sourceIds` over *our* `Source` rows — adopting
+their API-key model means writing a mapping layer from their scope vocabulary to ours and then
+owning both. The thing we build is smaller than the mapping it replaces.
+
+**The honest bit, recorded because the alternative is a comfortable lie.** A stdio token buys **no
+containment**. The MCP server reads `DATABASE_URL` itself — by design, so no client config holds a
+secret — which means anyone who can launch the subprocess can reach Postgres directly and bypass
+`Scope` entirely. The token buys attribution, per-agent narrowing, and revocation. That is all of
+M7 and it is worth building, but it is not confidentiality, and a design doc claiming otherwise
+would stop the next reader from looking. Containment arrives with remote transport, where the server
+holds the credential and the client does not.
+
+**No cache, and the rule that outlives the decision.** Verification is a lookup per call. The
+general rule: **the maximum legitimate cache TTL equals the revocation latency the Agent Access
+screen promises the user.** The button says access ends immediately, so the TTL is zero. If a later
+version says "within 30 seconds", 30 seconds becomes purchasable. The UI copy is the contract; a
+cache added without changing that copy is a lie in the product, not a performance tweak.
+
+**`Grant.sourceIds` gates writes, not just reads** — resolving ADR 0003 open item 3 rather than
+routing it onward again. Read-only narrowing leaves a write-only channel: a principal scoped to
+source A could upsert into source B, injecting a document it cannot itself read but that every other
+member reads and the MCP server serves to every other agent. That is R2's threat with the roles
+reversed — R2 asks what ingested content can do to a reader, this asks who is allowed to be the
+ingester. Rejected alongside it: a `capabilities: ('read'|'write')[]` axis on `Grant`, because there
+is one write caller and one read-only caller class. The hazard that creates is closed structurally
+(`ReadonlyDocStore`) with an explicit trigger recorded as R11, rather than by discipline.
+
+**Increment 0 first, and why it is not merely tidying.** Issuing a narrowed grant before completing
+enforcement would have been security theatre: five of nine store methods ignored `sourceIds`. The
+register said three of six — a number relayed from a reviewer without checking, and wrong in a way
+that understated it. Increment 0 needs no vendor, no tables, no signature change and no UI, and the
+system is measurably safer with it alone.
+
+**Method, following D13.** The completeness claim is held by a test that reflects over the live
+store surface and fails loudly on any method with no declared narrowing behavior — not by a list of
+five method names, which would be correct today and silent about the method added next quarter. The
+claim that it catches a later method was verified before being written into this entry, the ADR, or
+the graph: an unregistered store method was added and the suite went red naming it.
+
+**Reversible?** The design is. The `sourceIds`-gates-writes half is **not** — reverting it reopens
+the write channel. `ServerDeps.scope(): Promise<Scope>` and an async `vault()` are also one-way in
+practice, since reverting means giving up the per-call lookup and with it revocation.

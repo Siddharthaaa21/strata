@@ -6,21 +6,27 @@
  * security properties live in ./tools.ts; ./server.ts is the SDK wiring. This file does nothing but
  * connect a real database and a stdio transport.
  *
- * Run:  DATABASE_URL=... STRATA_WORKSPACE_ID=... node apps/mcp/src/index.ts
+ * Run:  DATABASE_URL=... STRATA_AGENT_TOKEN=... node apps/mcp/src/index.ts
  *
- * TEMPORARY — the scope below is a single fixed workspace read from STRATA_WORKSPACE_ID. There is
- * no authentication yet (R7 / M7): anything that can start this process gets that workspace. That
- * is acceptable for local single-user use and is NOT acceptable for a shared or hosted deployment.
- * Replacing this with a per-connection authenticated principal is the M7 Agent Access work.
+ * The caller is authenticated (ADR 0006 increment 1). `STRATA_AGENT_TOKEN` names a principal, its
+ * workspace, and its grant; the scope is verified per tool call, so revoking the token or the agent
+ * takes effect on the next call with nothing to invalidate.
+ *
+ * WHAT THAT DOES AND DOES NOT BUY, over stdio. It buys attribution (this agent, not "somebody"),
+ * per-agent narrowing, and revocation. It does NOT buy confidentiality: this process reads
+ * DATABASE_URL from the repo's .env — deliberately, so no client config holds a secret — which means
+ * anything that can launch it can also connect to Postgres directly and bypass every check here.
+ * Containment arrives with remote transport, where the server holds the credential and the client
+ * does not. Saying otherwise would stop the next reader from looking.
  */
 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { localDevScope } from '@strata/auth';
-import type { WorkspaceId } from '@strata/core';
+import { createAuthenticator } from '@strata/auth';
 import {
+  createAuthStore,
   createDocStore,
   createSourceStore,
   fromPoolLike,
@@ -35,23 +41,29 @@ loadDotEnv(resolve(dirname(fileURLToPath(import.meta.url)), '../../..'));
 
 const connectionString = requireConnectionString(process.env);
 
-const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId | undefined;
-if (!workspaceId) {
+// No anonymous fallback, and no STRATA_WORKSPACE_ID here any more: the workspace comes from the
+// token. Keeping both would be two sources of truth that can disagree, and the one that loses is
+// always the one the operator was looking at.
+const agentToken = process.env['STRATA_AGENT_TOKEN'];
+if (!agentToken) {
   throw new Error(
-    'STRATA_WORKSPACE_ID is not set. There is no default: a server that silently picks a ' +
-      'workspace is a server that silently serves the wrong one.',
+    'STRATA_AGENT_TOKEN is not set. There is no default and no anonymous mode: a server that ' +
+      'silently picks a principal is a server that silently serves the wrong one. Create one with ' +
+      '`npm run agent:create -- "<name>"`.',
   );
 }
 
 const pool = new pg.Pool({ connectionString, max: 4 });
 const db = fromPoolLike(pool);
+const auth = createAuthenticator(createAuthStore(db));
 
 const server = createStrataServer({
   docs: createDocStore(db),
   sources: createSourceStore(db),
-  // Re-resolved per call rather than captured, so this becomes a real auth lookup in M7 without
-  // changing the server. A cached Scope is a Grant revocation that never takes effect.
-  scope: () => localDevScope({ workspaceId }),
+  // Verified per call, never captured. Over stdio the token is fixed for the process lifetime, but
+  // the *scope* is not: re-resolving is what makes revocation immediate rather than
+  // effective-next-restart, and it is the same code path a remote transport will use per request.
+  scope: () => auth.scopeFromAgentToken(agentToken),
 });
 
 await server.connect(new StdioServerTransport());

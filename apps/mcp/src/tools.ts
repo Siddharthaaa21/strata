@@ -14,7 +14,7 @@
  */
 
 import { fence, fenceDoc, fenceResults, asUntrusted, type Scope, type DocId } from '@strata/core';
-import { MAX_RESULTS, type DocStore, type SourceStore } from '@strata/storage';
+import { MAX_RESULTS, type ReadonlyDocStore, type ReadonlySourceStore } from '@strata/storage';
 
 /**
  * Tool signatures are a published interface. An agent's stored workflow depends on them, and a
@@ -98,7 +98,7 @@ export interface SearchHit {
 
 export async function searchDocs(
   scope: Scope,
-  store: DocStore,
+  store: ReadonlyDocStore,
   input: { query?: unknown; limit?: unknown },
 ) {
   if (typeof input.query !== 'string' || input.query.trim() === '') {
@@ -128,7 +128,7 @@ export async function searchDocs(
   return fenceResults(projected);
 }
 
-export async function getDoc(scope: Scope, store: DocStore, input: { doc_id?: unknown }) {
+export async function getDoc(scope: Scope, store: ReadonlyDocStore, input: { doc_id?: unknown }) {
   if (typeof input.doc_id !== 'string' || input.doc_id === '') {
     throw new ToolError('InvalidInput');
   }
@@ -174,7 +174,7 @@ export interface SourceInfo {
  * The store filters rather than asserts, so a grant that excludes a source hides it instead of
  * failing the whole call - failing would itself disclose that the source exists.
  */
-export async function listSources(scope: Scope, store: SourceStore) {
+export async function listSources(scope: Scope, store: ReadonlySourceStore) {
   const sources = await store.list(scope);
   const projected: SourceInfo[] = sources.map((s) => ({
     source_id: s.id,

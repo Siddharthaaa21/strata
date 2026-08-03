@@ -13,21 +13,36 @@ import {
   ListToolsRequestSchema,
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
+import { AuthError } from '@strata/auth';
 import type { Scope } from '@strata/core';
-import type { DocStore, SourceStore } from '@strata/storage';
+import type { ReadonlyDocStore, ReadonlySourceStore } from '@strata/storage';
 import { TOOL_SCHEMAS, ToolError, getDoc, listSources, searchDocs } from './tools.ts';
 
+/**
+ * The read-only slice of the stores this server is allowed to see.
+ *
+ * D5 says no mutating tool exists. That was true because nobody had written one — a property held by
+ * the absence of a line of code, which is the weakest way to hold anything. Handing the server a
+ * `Pick` of the read methods makes it true at the type level instead: `upsert` is not reachable from
+ * here because it was never passed in.
+ *
+ * This is also what lets `Grant.sourceIds` stay a single dimension covering reads and writes, with
+ * no `capabilities: ('read'|'write')[]` axis (ADR 0006 §6). Widening either type below is the
+ * trigger to revisit that decision — see R11.
+ */
+export type { ReadonlyDocStore, ReadonlySourceStore };
+
 export interface ServerDeps {
-  readonly docs: DocStore;
-  readonly sources: SourceStore;
+  readonly docs: ReadonlyDocStore;
+  readonly sources: ReadonlySourceStore;
   /**
-   * Resolved per connection, upstream of this module.
+   * Resolved per call, never held.
    *
-   * A `Scope` must not be cached across requests — a cached one is a `Grant` revocation that
-   * silently does not take effect (see `Scope`'s doc comment). This is a function, not a value,
-   * so a longer-lived server can re-resolve it per call once auth exists.
+   * Async because it is now a credential verification — one indexed lookup, no cache. The maximum
+   * legitimate cache TTL is the revocation latency the Agent Access screen promises, and it promises
+   * immediate (ADR 0006 §4). A cached `Scope` is a `Grant` revocation that never takes effect.
    */
-  scope(): Scope;
+  scope(): Promise<Scope>;
 }
 
 const json = (value: unknown): CallToolResult => ({
@@ -59,11 +74,13 @@ export function createStrataServer(deps: ServerDeps): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
     const { name, arguments: args } = request.params;
-    // Re-resolved per call, never held.
-    const scope = deps.scope();
     const input = (args ?? {}) as Record<string, unknown>;
 
     try {
+      // Inside the try, deliberately: verification can now fail, and an AuthError escaping this
+      // handler would surface as a transport-level crash instead of a tool result.
+      const scope = await deps.scope();
+
       switch (name) {
         case 'search_docs':
           return json(await searchDocs(scope, deps.docs, input));
@@ -75,6 +92,18 @@ export function createStrataServer(deps: ServerDeps): Server {
           return failure('UnknownTool');
       }
     } catch (e) {
+      // Every authentication failure kind — malformed, unknown, revoked, expired — collapses to one
+      // word. The `kind` exists for our own logs; returning it would let someone probe which token
+      // ids are real.
+      //
+      // `Unauthorized` IS distinguishable from `NotFound`, and that is a reasoned exception to
+      // mcp-surface rule 5 rather than an oversight. Rule 5 exists so the error channel is not an
+      // enumeration oracle *over document ids*; a caller learning that their own credential is bad
+      // enumerates nothing, since they already hold it. Collapsing the two would make a revoked
+      // agent indistinguishable from an empty vault — an unresolvable support problem. The oracle
+      // boundary is facts about the vault, not facts about the caller's own credential.
+      if (e instanceof AuthError) return failure('Unauthorized');
+
       // Only ToolError messages cross the boundary. Anything else - a driver error, a bug - would
       // otherwise leak schema names, SQL, or ids into a model's context.
       return failure(e instanceof ToolError ? e.message : 'InternalError');

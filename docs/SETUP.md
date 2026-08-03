@@ -81,14 +81,49 @@ to write.
 
 ## Not your task, and deliberately so
 
-**Authentication does not exist.** `packages/auth` exports `localDevScope`, which is a labelled
-development stub: anything able to start the process gets the configured workspace. There is no
-credential, no verification, and no revocation.
+**The MCP server now authenticates its caller.** `STRATA_AGENT_TOKEN` names a principal, its
+workspace, and its grant, verified on every tool call. Create one:
+
+```bash
+npm run agent:create -- "Claude Code — my laptop"
+```
+
+The token is printed once and cannot be recovered; the script does not write it anywhere. Paste the
+`STRATA_AGENT_TOKEN=` line into `.env`. To narrow an agent to specific sources, pass
+`--sources src-markdown`; to test the gate, `--sources ''` creates a deny-all grant.
+
+Revocation takes effect on the **next call**, with no restart and nothing to invalidate:
+
+```sql
+UPDATE agent_tokens SET revoked_at = now() WHERE principal_id = '<id>';
+```
+
+**The web app is still unauthenticated.** `packages/auth` still exports `localDevScope` for it — a
+labelled development stub where anything able to start the process gets the configured workspace.
+Human sessions are increment 2 of ADR 0006.
+
+**And be clear about what a stdio token does not buy: confidentiality.** This server reads
+`DATABASE_URL` from `.env` itself, deliberately, so that no client config holds a secret. Anything
+that can launch the process can therefore also connect to Postgres directly and bypass every check
+in the tool layer. The token buys **attribution** (which agent, not "somebody"), **narrowing**
+(per-agent `Grant.sourceIds`), and **revocation**. Containment arrives with remote transport, where
+the server holds the credential and the client does not.
 
 That is fine for a local single-user vault. It is **not** acceptable for anything shared or hosted.
-Real per-connection principals are M7 (see R7 in the risk register). Do not deploy this to a shared
-environment on the assumption that the tenancy model protects you — the tenancy model is sound, but
-nothing authenticates the caller yet.
+Do not deploy this to a shared environment on the assumption that the tenancy model protects you —
+the tenancy model is sound, but nothing authenticates the caller yet.
+
+**The design now exists**: `docs/adr/0006-authentication.md` decides it, and its increment 0 has
+landed — `Grant.sourceIds` gates every store method, reads and writes alike, so a narrowed grant
+means something before one is ever issued. Increment 1 (agent tokens over stdio) is what makes the
+sentence above stop being true. Until it ships, this section stands as written.
+
+One thing that ADR is explicit about and is worth knowing before you wire anything up: even once
+agent tokens exist, a token in a **stdio** client config buys attribution, per-agent scoping, and
+revocation — but **not** confidentiality. This server reads `DATABASE_URL` itself (deliberately, so
+your client config holds no secret), so anything that can launch it can reach the database directly.
+Containment arrives with remote transport, where the server holds the credential and the client
+does not.
 
 ---
 

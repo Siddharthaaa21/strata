@@ -122,10 +122,19 @@ the original defenses did.
 
 **Also open, deliberately not fixed in this pass** (recorded so they are not mistaken for oversights):
 ADR 0005 section 5's response logging is still unimplemented, so an injection that succeeds leaves no
-record; `Grant.sourceIds` is enforced on three of six store methods and must be complete before M7
-issues the first narrowed grant; and two quadratic regexes in the ingest path (`canonicalize`'s
-`/\s*$/` and the link-stripper) will hang a worker on a crafted 2 MiB file — an ingest-time DoS, not
-a live-server one, since ingest is a CLI.
+record; and two quadratic regexes in the ingest path (`canonicalize`'s `/\s*$/` and the
+link-stripper) will hang a worker on a crafted 2 MiB file — an ingest-time DoS, not a live-server
+one, since ingest is a CLI.
+
+**`Grant.sourceIds` — CLOSED 2026-08-02, and the count was wrong.** This entry said "three of six
+store methods", relaying the reviewer's number without checking it. Reading every method, it was
+**five of nine**: `docs.upsert`, `docs.findKnown`, `sources.upsert`, `events.append`, and
+`events.recent` all dropped the narrowing; only `docs.search`, `docs.list`, `docs.get`, and
+`sources.list` applied it. Two of the missed ones were worse than the summary implied — `findKnown`
+returned `{docId, contentHash}` for an out-of-grant document, which is an existence oracle *and* a
+content-confirmation oracle, and `events.recent` enumerated every source in the workspace to a
+principal explicitly narrowed away from them. Fixed in ADR 0006 increment 0, with the narrowing
+extended to writes for the reason given there. Held by an enumerating test rather than a list.
 
 **Known limit, recorded as a passing test rather than left implicit:** plausible prose is delivered
 verbatim. ADR 0005 rejected stripping suspicious phrasing as unbounded and lossy, because this
@@ -220,10 +229,44 @@ because `contract-doc` requires metadata-only retrieval.
 
 ---
 
-## R7 — Auth provider unchosen · **MEDIUM**
+## R7 — Auth provider unchosen · **RESOLVED (design); increments 1-3 open**
 
 Downstream of R1. Cheap once tenancy is decided, so it is not blocking on its own — but it cannot
 be decided *before* R1, and starting here would be doing the easy half of a hard decision.
+
+**Resolved 2026-08-02 by `docs/adr/0006-authentication.md` / D14.** Human sessions are bought
+(Supabase Auth — it is already the Postgres this runs on); agent tokens are built, because no
+provider's scope model is `Grant.sourceIds` over our `Source` rows. Authorization never moves to the
+provider, and the provider's subject id is never a `PrincipalId` — both rules exist so a provider
+swap costs one table instead of every foreign key.
+
+The honest part of that ADR worth repeating here: **a stdio token buys no containment.** The MCP
+server reads `DATABASE_URL` itself, so anyone who can launch it can reach Postgres directly and
+bypass every check. What the token buys is attribution, per-agent narrowing, and revocation — which
+is all of M7, but it is not confidentiality, and describing it as confidentiality would be the same
+overclaiming D13 was written about.
+
+**Increment 0 landed with this entry:** `Grant.sourceIds` now gates all nine store methods. It
+previously gated four. Held complete by `packages/storage/src/grant-completeness.test.ts`, which
+enumerates the live store surface and fails on any method with no declared narrowing behavior.
+
+Increments 1 (agent tokens on stdio), 2 (human sessions), 3 (the Agent Access screen) are open.
+Until 1 lands, **there is still no authentication** — `localDevScope` is still the only path.
+
+---
+
+## R11 — A mutating MCP tool would make agent tokens writable · **LOW, trigger-based**
+
+Recorded so it fires on someone else's watch rather than being rediscovered.
+
+ADR 0006 §6 decided `Grant.sourceIds` is one dimension covering reads and writes, with no
+`capabilities: ('read'|'write')[]` axis, because there is exactly one write caller (the ingest CLI)
+and one read caller class (MCP agents, read-only by D5). That reasoning holds only while D5 holds.
+
+**The trigger is the first proposal to widen `ReadonlyDocStore`** (planned for increment 1 as
+`Pick<DocStore, 'search'|'list'|'get'>`, making D5 true at the type level rather than by the absence
+of a line of code). If a mutating tool is ever proposed, a capability axis on `Grant` must land in
+the same change — otherwise every agent token becomes a write credential silently.
 
 ---
 

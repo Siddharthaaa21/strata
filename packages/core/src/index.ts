@@ -33,7 +33,15 @@ export interface Membership {
   readonly joinedAt: string;
 }
 
-export type PrincipalKind = 'user' | 'agent';
+/**
+ * `'service'` is a non-interactive, non-LLM caller — the ingest CLI is the one that exists.
+ *
+ * Widened now rather than when it is needed (ADR 0006 §2). It has essentially no `switch` sites
+ * today, so widening is free; after the Agent Access screen ships, a service account authenticating
+ * as `'agent'` would appear in the connected-agents list, and filtering it back out by name is the
+ * kind of fragile special case that outlives whoever wrote it.
+ */
+export type PrincipalKind = 'user' | 'agent' | 'service';
 
 /** A caller. An agent is a first-class principal, not a proxy for the user who connected it. */
 export interface Principal {
@@ -107,6 +115,30 @@ export type Visible<T> = T & { readonly [visibleWitness]: true };
 
 function inGrant(scope: Scope, sourceId: SourceId): boolean {
   return scope.grant.sourceIds === undefined || scope.grant.sourceIds.includes(sourceId);
+}
+
+/**
+ * Gates a WRITE (or a keyed lookup) on the grant's source narrowing.
+ *
+ * `Grant.sourceIds` is one dimension covering both directions — a principal may read from and write
+ * to exactly the sources it names (ADR 0006 section 6, closing ADR 0003 open item 3).
+ *
+ * Narrowing reads but not writes would leave a **write-only channel**: a principal scoped to source
+ * A could upsert into source B, injecting a document it cannot itself read, which every other member
+ * of the workspace then reads and the MCP server then serves to every other agent. That is R2's
+ * threat with the roles reversed — R2 asks what ingested content can do to a reader, this asks who
+ * is allowed to be the ingester.
+ *
+ * Throws the same bare `'NotFound'` every other denial uses. A distinct `'Forbidden'` would confirm
+ * that the source exists, which is the enumeration oracle the MCP surface is built to avoid.
+ */
+export function requireSourceInGrant(scope: Scope, sourceId: SourceId): void {
+  if (!inGrant(scope, sourceId)) throw new Error('NotFound');
+}
+
+/** Non-throwing form, for lookups whose "no" is an absent result rather than an error. */
+export function isSourceInGrant(scope: Scope, sourceId: SourceId): boolean {
+  return inGrant(scope, sourceId);
 }
 
 /** Re-checks a row against a `Scope`. Does not throw — callers decide what "not visible" means. */
@@ -234,6 +266,22 @@ export interface ImportEvent {
   readonly sourceId: SourceId;
   /** Absent when the import failed before a Doc existed. */
   readonly docId?: DocId;
+  /**
+   * Which file this event is about — the relative path, per ADR 0003's identity rule.
+   *
+   * Added because a failure without it is unactionable. A `frontmatter-invalid` event across a
+   * 3000-file vault said only "something in this source failed", and `docId` is absent precisely in
+   * the failure case, so there was no way to learn *which* file. ADR 0003's stated purpose for
+   * recording failures is that the user can find out why a document did not appear; without this
+   * field that purpose was not served.
+   *
+   * Still optional: an event about a source-level operation legitimately has no single file.
+   *
+   * Untrusted-adjacent — it is a filesystem path from an ingested folder. Safe in the error channel
+   * because it is the identity we already store on `Doc.externalId`, and it is never interpolated
+   * into a tool description or an MCP response.
+   */
+  readonly externalId?: string;
   /** `skipped-duplicate` is a normal outcome — idempotent re-import is the design, not a fault. */
   readonly status: 'imported' | 'updated' | 'skipped-duplicate' | 'failed';
   /** `message` is sanitized. It must never echo raw ingested content back into a log or a UI. */

@@ -62,6 +62,85 @@
   margin-top: var(--space-reader-heading-margin-top);
 }
 
+/* Every heading rendered at one size made a long document unscannable — a section and its
+ * sub-sub-point looked identical, so the outline was invisible. The handoff's reader mockup shows
+ * one heading level, which is why this was not caught against fixtures. */
+.heading[data-level='1'] {
+  font-size: calc(var(--text-reader-heading) * 1.15);
+}
+.heading[data-level='3'],
+.heading[data-level='4'],
+.heading[data-level='5'],
+.heading[data-level='6'] {
+  font-size: var(--text-body);
+  color: var(--ink-strong);
+}
+
+.list {
+  margin: 0;
+  padding-left: var(--space-reader-list-indent);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-reader-list-gap);
+}
+
+.inlineCode {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--surface-code);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  color: var(--ink-code);
+}
+
+/* Tables scroll inside their own box. A wide table must never make the whole page scroll
+ * horizontally — and engineering docs have wide tables. */
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--text-reader-table);
+  line-height: var(--leading-card-excerpt);
+}
+
+.table th,
+.table td {
+  padding: var(--space-reader-table-cell);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.table th {
+  font-weight: 600;
+  color: var(--ink-strong);
+  background: var(--surface-sunken);
+  white-space: nowrap;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.quote {
+  margin: 0;
+  padding: var(--space-reader-quote-padding);
+  border-left: 2px solid var(--border-structural);
+  color: var(--ink-muted);
+}
+
+.rule {
+  border: none;
+  border-top: 1px solid var(--border-hairline);
+  margin: 0;
+  width: 100%;
+}
+
 .code {
   background: var(--surface-code);
   border-radius: var(--radius-md);
@@ -126,6 +205,12 @@
   font-weight: 600;
   text-align: center;
   cursor: pointer;
+  /* Reset the UA button styling — this is a real <button> now, not a div, so that a disabled state
+     and a screen-reader announcement are possible at all. The geometry above is the handoff's. */
+  border: none;
+  width: 100%;
+  font-family: inherit;
+  display: block;
 }
 
 /* The only breakpoint — README:33-38. Reader stacks content-first, rail below, with a top border
@@ -140,4 +225,21 @@
     border-left: none;
     border-top: 1px solid var(--border-structural);
   }
+}
+
+/* The disabled state for the R8 dead-end CTA. Deliberately reads as unavailable rather than merely
+ * inert: an accent-filled control that does nothing on click is worse than one that visibly cannot
+ * be clicked, because the first teaches the user the app is broken. */
+.cta:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: saturate(0.6);
+}
+
+.ctaNote {
+  margin: 0;
+  font-size: var(--text-micro);
+  line-height: var(--leading-card-excerpt);
+  color: var(--ink-faint);
+  text-align: center;
 }

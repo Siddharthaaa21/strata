@@ -22,7 +22,8 @@
     "db:setup": "node scripts/db-setup.mjs",
     "ingest": "node scripts/ingest.mjs",
     "search": "node scripts/search.mjs",
-    "mcp:smoke": "node scripts/mcp-smoke.mjs"
+    "mcp:smoke": "node scripts/mcp-smoke.mjs",
+    "agent:create": "node scripts/agent-create.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
