@@ -24,6 +24,11 @@ import {
 export * from './driver.ts';
 export * from './sources.ts';
 export * from './events.ts';
+export * from './auth-store.ts';
+
+// `export *` re-exports but does not bring a name into this module's scope; ReadonlySourceStore
+// below is declared here, so the type it narrows has to be imported explicitly.
+import type { SourceStore } from './sources.ts';
 
 /** Minimal driver surface. Satisfied by PGlite (tests) and node-postgres (production). */
 export interface SqlDriver {
@@ -96,6 +101,54 @@ CREATE TABLE IF NOT EXISTS import_events (
 CREATE INDEX IF NOT EXISTS import_events_recent
   ON import_events (workspace_id, occurred_at DESC);
 
+-- Authentication (ADR 0006). Revocation never deletes a row: an access log naming a principal id
+-- that no longer resolves is worse than no access log.
+CREATE TABLE IF NOT EXISTS principals (
+  workspace_id text        NOT NULL,
+  id           text        NOT NULL,
+  kind         text        NOT NULL,          -- 'user' | 'agent' | 'service'
+  display_name text        NOT NULL,
+  created_at   timestamptz NOT NULL,
+  created_by   text,                          -- null for the bootstrap owner
+  revoked_at   timestamptz,
+  PRIMARY KEY (workspace_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS grants (
+  workspace_id text        NOT NULL,
+  id           text        NOT NULL,
+  principal_id text        NOT NULL,
+  -- NULL means every source in the workspace. '{}' means deny-all. These are NOT the same value,
+  -- and a COALESCE(source_ids, '{}') anywhere silently turns deny-all into allow-all.
+  source_ids   text[],
+  created_at   timestamptz NOT NULL,
+  revoked_at   timestamptz,
+  PRIMARY KEY (workspace_id, id)
+);
+
+-- "At most one active grant per principal" enforced by the database, not by application discipline.
+-- Scope holds a single Grant, so two active grants would need a union at mint time — and union is
+-- the one operation that turns "narrows only, can never widen" into its opposite (ADR 0006 §2).
+CREATE UNIQUE INDEX IF NOT EXISTS grants_one_active
+  ON grants (workspace_id, principal_id) WHERE revoked_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS agent_tokens (
+  -- NOT workspace-scoped, and this is the one deliberate exception to the leading-workspace_id
+  -- convention: it is the lookup key used BEFORE any workspace is known. That is the whole point of
+  -- splitting a public id off the secret — verification is a primary-key hit, not a scan over every
+  -- stored hash.
+  token_id     text        PRIMARY KEY,
+  workspace_id text        NOT NULL,
+  principal_id text        NOT NULL,
+  grant_id     text        NOT NULL,
+  token_hash   bytea       NOT NULL,          -- sha256 of the secret. The secret is never stored.
+  last4        text        NOT NULL,
+  created_at   timestamptz NOT NULL,
+  expires_at   timestamptz,
+  last_used_at timestamptz,
+  revoked_at   timestamptz
+);
+
 CREATE INDEX IF NOT EXISTS docs_fts ON docs USING GIN (search_vector);
 CREATE INDEX IF NOT EXISTS docs_scope ON docs (workspace_id, source_id) INCLUDE (updated_at);
 `;
@@ -155,6 +208,17 @@ export interface DocSummary {
 
 /** Hard ceiling on any result set. A caller's `limit` is clamped to this, never honored above it. */
 export const MAX_RESULTS = 50;
+
+/**
+ * The read-only slice of each store, for callers that must not be able to write.
+ *
+ * Declared here rather than in `apps/mcp` so the constraint travels with the store it constrains —
+ * anyone adding a store method sees these and has to decide which side it belongs on. D5's "no
+ * mutating MCP tool exists" is held by this type, not by the absence of a line of code (ADR 0006 §6;
+ * widening either one is R11's trigger).
+ */
+export type ReadonlyDocStore = Pick<DocStore, 'search' | 'list' | 'get'>;
+export type ReadonlySourceStore = Pick<SourceStore, 'list'>;
 
 export interface DocStore {
   upsert(scope: Scope, input: UpsertDocInput): Promise<DocId>;

@@ -214,13 +214,24 @@ need it.
       no declared narrowing behavior, so a method added later cannot quietly skip the grant.
       Verified by adding an unregistered method and confirming the suite went red.
 
-**Increment 1 — agent tokens on stdio**
+**Increment 1 — agent tokens on stdio** `done`
 
-- [ ] `principals`, `grants`, `agent_tokens` tables; `stra_at_<tokenId>_<secret>` format
-- [ ] `createAuthenticator` in `packages/auth`; `AuthStore` port implemented by `packages/storage`
-- [ ] MCP server requires `STRATA_AGENT_TOKEN`; `STRATA_WORKSPACE_ID` removed from it
-- [ ] `ReadonlyDocStore` — makes D5's "no mutating tool exists" true at the type level (see R11)
-- [ ] `db:setup` bootstraps a workspace, owner, grant, and dev credentials
+- [x] `principals`, `grants`, `agent_tokens` tables; `stra_at_<tokenId>_<secret>` format. A partial
+      unique index enforces at most one *active* grant per principal in the database rather than by
+      application discipline. `source_ids` NULL means all sources, `'{}'` means deny-all.
+- [x] `createAuthenticator` in `packages/auth`; `AuthStore` port declared there and implemented by
+      `packages/storage`, so auth never imports `pg`. One joined lookup per call, no cache.
+- [x] MCP server requires `STRATA_AGENT_TOKEN`; `STRATA_WORKSPACE_ID` removed from it — the
+      workspace comes from the token, and two sources of truth can disagree.
+- [x] `ReadonlyDocStore` — D5's "no mutating tool exists" is now true at the type level rather than
+      by the absence of a line of code (see R11 for the trigger to revisit).
+- [x] `npm run agent:create` mints an agent, its grant, and its first token atomically. The token
+      prints once and the script never writes it to a file.
+- [x] Proven live: `npm run mcp:smoke` mints an ephemeral agent, drives the real server over stdio,
+      then revokes mid-connection and asserts the next call returns `Unauthorized`. Revocation is
+      immediate with no restart — which is the property the Agent Access screen will promise.
+- [ ] CLI scripts (`ingest`, `search`) still use `localDevScope`; they move to `STRATA_CLI_TOKEN`
+      with increment 2, when that function is deleted.
 
 **Increment 2 — human sessions**
 

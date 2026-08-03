@@ -24,6 +24,8 @@ found that getDoc was returning those fields raw with no preamble and no untrust
 a live prompt-injection channel that is now closed. The guarantee-fencing node describes the structural
 guard that prevents regression.
 
-Planned for dec-auth increment 1: will depend on `ReadonlyDocStore = Pick<DocStore, 'search'|'list'|'get'>`,
-making D5's "no mutating tool exists" true at the type level. Still open: the strata-verifier pass that
-closes R2.
+Dec-auth increment 1 (DONE): MCP server now authenticates all callers via `STRATA_AGENT_TOKEN` environment
+variable. `ServerDeps.scope()` is async and called inside the try block, receiving Scope only after successful
+authentication. `ReadonlyDocStore = Pick<DocStore, 'search'|'list'|'get'>` is now real (not planned), enforcing
+at the type level that D5's "no mutating tool exists" cannot regress. Workspace is sourced from the verified
+agent token, not from env. Still open: the strata-verifier pass that closes R2.

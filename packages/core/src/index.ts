@@ -33,7 +33,15 @@ export interface Membership {
   readonly joinedAt: string;
 }
 
-export type PrincipalKind = 'user' | 'agent';
+/**
+ * `'service'` is a non-interactive, non-LLM caller — the ingest CLI is the one that exists.
+ *
+ * Widened now rather than when it is needed (ADR 0006 §2). It has essentially no `switch` sites
+ * today, so widening is free; after the Agent Access screen ships, a service account authenticating
+ * as `'agent'` would appear in the connected-agents list, and filtering it back out by name is the
+ * kind of fragile special case that outlives whoever wrote it.
+ */
+export type PrincipalKind = 'user' | 'agent' | 'service';
 
 /** A caller. An agent is a first-class principal, not a proxy for the user who connected it. */
 export interface Principal {

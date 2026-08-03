@@ -26,3 +26,31 @@ apps/web/next-env.d.ts
 
 # Agent worktrees — full checkouts created by isolation: 'worktree'. Each has its own .git.
 .claude/worktrees/
+
+# Vercel. `.vercel/` holds the project and org ids written by `vercel link` — not secret exactly,
+# but machine-specific and account-identifying, and it makes a fork link to the wrong project.
+.vercel/
+.turbo/
+
+# Database dumps. Worth its own entry now that `agent_tokens` and `principals` exist: a dump is no
+# longer just document text, it is the auth table too. Hashes, not secrets — but also every doc
+# body, and a dump is the classic way a "temporary" file becomes a permanent commit.
+*.sql.gz
+*.dump
+dump.sql
+backup*.sql
+
+# Key material. None of this belongs in the repo under any circumstance.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+.pgpass
+
+# Local scratch that tends to accumulate next to real files
+*.bak
+*.orig
+*.rej
+coverage/
+.idea/

@@ -24,6 +24,13 @@ events.recent all enforce the same grant boundary as docs.search/list/get and so
 is held by guarantee-grant-completeness: an enumerating test that fails loudly on any store method with
 no declared narrowing behavior, catching new methods tomorrow without editing the test.
 
+Dec-auth increment 1 (DONE): New tables `principals`, `grants`, `agent_tokens` hold agent authentication state.
+Principal + grant + token created atomically via one data-modifying CTE (createAgent). Grants carry `source_ids`
+NULL (all sources) or '{}' (deny-all) or a set of source ids; partial unique index enforces at most one ACTIVE
+grant per principal. AuthStore implementation: lookupToken is ONE indexed query (token → principal → grant);
+touchToken rate-limited to once per minute. ReadonlySourceStore and ReadonlyDocStore types exported so MCP server
+can depend only on read operations by type.
+
 Tested against real Postgres 18 via PGlite (WASM, in-process) — the SQL under test is the SQL that
 ships. Still open: connecting a live server (no Postgres in the dev environment yet) and retiring
 the fixtures the screens currently read from.

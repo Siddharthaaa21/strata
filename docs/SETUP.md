@@ -81,9 +81,33 @@ to write.
 
 ## Not your task, and deliberately so
 
-**Authentication does not exist.** `packages/auth` exports `localDevScope`, which is a labelled
-development stub: anything able to start the process gets the configured workspace. There is no
-credential, no verification, and no revocation.
+**The MCP server now authenticates its caller.** `STRATA_AGENT_TOKEN` names a principal, its
+workspace, and its grant, verified on every tool call. Create one:
+
+```bash
+npm run agent:create -- "Claude Code — my laptop"
+```
+
+The token is printed once and cannot be recovered; the script does not write it anywhere. Paste the
+`STRATA_AGENT_TOKEN=` line into `.env`. To narrow an agent to specific sources, pass
+`--sources src-markdown`; to test the gate, `--sources ''` creates a deny-all grant.
+
+Revocation takes effect on the **next call**, with no restart and nothing to invalidate:
+
+```sql
+UPDATE agent_tokens SET revoked_at = now() WHERE principal_id = '<id>';
+```
+
+**The web app is still unauthenticated.** `packages/auth` still exports `localDevScope` for it — a
+labelled development stub where anything able to start the process gets the configured workspace.
+Human sessions are increment 2 of ADR 0006.
+
+**And be clear about what a stdio token does not buy: confidentiality.** This server reads
+`DATABASE_URL` from `.env` itself, deliberately, so that no client config holds a secret. Anything
+that can launch the process can therefore also connect to Postgres directly and bypass every check
+in the tool layer. The token buys **attribution** (which agent, not "somebody"), **narrowing**
+(per-agent `Grant.sourceIds`), and **revocation**. Containment arrives with remote transport, where
+the server holds the credential and the client does not.
 
 That is fine for a local single-user vault. It is **not** acceptable for anything shared or hosted.
 Do not deploy this to a shared environment on the assumption that the tenancy model protects you —

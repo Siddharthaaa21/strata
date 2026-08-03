@@ -12,6 +12,79 @@
 
 import { mintScope } from '@strata/core/scope-internal';
 import type { GrantId, PrincipalId, Scope, SourceId, WorkspaceId } from '@strata/core';
+import { parseAgentToken, secretMatches } from './tokens.ts';
+import type { AuthStore } from './store.ts';
+
+export * from './tokens.ts';
+export * from './store.ts';
+
+/** Why a credential was rejected. For OUR logs — never for the wire. */
+export type AuthFailureKind = 'malformed' | 'unknown' | 'revoked' | 'expired';
+
+/**
+ * Every rejection is this one class, and the caller collapses all of them to a single wire message.
+ *
+ * `kind` exists so an operator debugging "my agent stopped working" can tell expired from revoked in
+ * a server log. Returning that distinction to the caller would let someone probe which `tokenId`s
+ * exist, which is the same enumeration problem `NotFound` solves for document ids.
+ */
+export class AuthError extends Error {
+  readonly kind: AuthFailureKind;
+
+  constructor(kind: AuthFailureKind) {
+    super(`authentication failed: ${kind}`);
+    this.name = 'AuthError';
+    this.kind = kind;
+  }
+}
+
+export interface Authenticator {
+  /** Verifies a presented agent token and mints a request `Scope`. */
+  scopeFromAgentToken(presented: string): Promise<Scope>;
+}
+
+/**
+ * The verification path (ADR 0006 section 4).
+ *
+ * One indexed lookup per call, and **no cache**. The rule that outlives this code: the maximum
+ * legitimate cache TTL equals the revocation latency the Agent Access screen promises the user. It
+ * promises immediate, so the TTL is zero. A cache added without changing that copy is a lie in the
+ * product, not a performance tweak.
+ */
+export function createAuthenticator(store: AuthStore, now: () => Date = () => new Date()): Authenticator {
+  return {
+    async scopeFromAgentToken(presented) {
+      const parsed = parseAgentToken(presented);
+      if (parsed === undefined) throw new AuthError('malformed');
+
+      const row = await store.lookupToken(parsed.tokenId);
+      // An unknown tokenId and a wrong secret return the SAME failure. Distinguishing them would
+      // confirm that a given tokenId is real, turning the error channel into an oracle over which
+      // credentials exist.
+      if (row === undefined) throw new AuthError('unknown');
+      if (!secretMatches(parsed.secret, row.tokenHash)) throw new AuthError('unknown');
+
+      if (row.tokenRevokedAt !== undefined || row.principalRevokedAt !== undefined) {
+        throw new AuthError('revoked');
+      }
+      if (row.expiresAt !== undefined && new Date(row.expiresAt).getTime() <= now().getTime()) {
+        throw new AuthError('expired');
+      }
+
+      // mintScope re-checks the grant's own revocation and that it matches the principal. Kept even
+      // though the query could filter it: it is the invariant's home, and belt-and-braces on the one
+      // function permitted to create authority is cheap.
+      const scope = mintScope(
+        { id: row.principalId, kind: row.kind, workspaceId: row.workspaceId },
+        row.grant,
+      );
+
+      // Fire and forget. A failure to record usage must never fail the request it is recording.
+      void store.touchToken(parsed.tokenId, now().toISOString()).catch(() => {});
+      return scope;
+    },
+  };
+}
 
 export interface LocalScopeOptions {
   readonly workspaceId: WorkspaceId;

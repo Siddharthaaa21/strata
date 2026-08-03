@@ -135,6 +135,24 @@
   --space-reader-body-gap: 18px; /* Vault.dc.html:155 */
   --space-reader-heading-margin-top: 6px; /* Vault.dc.html:157,159 */
   --space-code-block-padding: 14px 16px; /* Vault.dc.html:160 */
+
+  /* Reader block types the handoff does not specify — lists, tables, quotes.
+   *
+   * NOT from the handoff, and labelled so nobody later "corrects" them against a line that does not
+   * exist. `Vault.dc.html`'s reader shows a page of prose, so it has no list or table to measure.
+   * The real corpus is engineering documentation and is mostly both.
+   *
+   * DERIVED, not invented: each value is a ratio of a measured reader value rather than a taste
+   * call. List gap is half the 18px block gap, because items inside one list are more related than
+   * two blocks are. Indent matches the 24px rail gap. Table cell padding reuses the code block's
+   * 14px/16px rhythm. The quote border matches the structural border used elsewhere.
+   *
+   * If the handoff is ever extended to cover these, its values win and these come out. */
+  --space-reader-list-gap: 9px;
+  --space-reader-list-indent: 24px;
+  --space-reader-table-cell: 8px 12px;
+  --space-reader-quote-padding: 2px 0 2px 16px;
+  --text-reader-table: 15px;
   --space-reader-rail-gap: 24px; /* Vault.dc.html:166 */
   --space-reader-rail-padding: 32px 24px; /* desktop — Vault.dc.html:237 */
   --space-rail-label-gap: 9px; /* Vault.dc.html:168,176 */

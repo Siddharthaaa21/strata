@@ -102,7 +102,7 @@ async function connected(sourceIds?: readonly SourceId[]) {
     body: 'other tenant body',
   });
 
-  const server = createStrataServer({ docs, sources, scope: () => scopeFor(WS, sourceIds) });
+  const server = createStrataServer({ docs, sources, scope: async () => scopeFor(WS, sourceIds) });
   const client = new Client({ name: 'test-client', version: '1.0.0' }, { capabilities: {} });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);

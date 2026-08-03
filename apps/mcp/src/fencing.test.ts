@@ -93,7 +93,7 @@ async function ingestAndConnect(files: Record<string, string>) {
     }),
   );
 
-  const server = createStrataServer({ docs, sources, scope: () => scope });
+  const server = createStrataServer({ docs, sources, scope: async () => scope });
   const client = new Client({ name: 'fencing', version: '1.0.0' }, { capabilities: {} });
   const [c, s] = InMemoryTransport.createLinkedPair();
   await Promise.all([client.connect(c), server.connect(s)]);

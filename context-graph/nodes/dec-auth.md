@@ -17,8 +17,15 @@ enumerates the live store surface and fails loudly on any method with no declare
 This resolves ADR 0003 open item 3 (sourceIds gates writes as well as reads, closing the write-only
 injection channel). No schema changes, no signature changes, no UI.
 
-**Increments 1-3 (OPEN):** 1 = agent tokens on stdio with tables, scopeFromAgentToken, bootstrap;
-2 = human sessions with Supabase Auth, user_identities table, vault() async, delete localDevScope;
+**Increment 1 (DONE):** Agent tokens on stdio with tables, scopeFromAgentToken, bootstrap. Token format
+`stra_at_<tokenId>_<secret>`, verified by SHA-256 lookup of secret (never stored). AuthStore port declared
+in packages/auth, implemented in packages/storage with lookupToken (one indexed query) and createAgent (one
+data-modifying CTE). Principal + grant + token created atomically; one active grant per principal enforced by
+partial unique index. Scope minted from a verified token, no caching. MCP server now requires STRATA_AGENT_TOKEN,
+rejects unauthenticated clients with Unauthorized (not NotFound). ReadonlyDocStore enforces D5 structurally: MCP
+server cannot upsert by type.
+
+**Increments 2-3 (OPEN):** 2 = human sessions with Supabase Auth, user_identities table, vault() async, delete localDevScope;
 3 = Agent Access screen + access log. The no-cache rule is tied to the Agent Access screen's copy
 (immediate revocation), and that rule outlives this decision. Max legitimate cache TTL = the revocation
 latency the UI promises.

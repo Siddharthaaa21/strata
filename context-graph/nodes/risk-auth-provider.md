@@ -16,7 +16,13 @@ Agent tokens are built in-house—no provider's scope model is `Grant.sourceIds`
 Authorization never moves to the provider; the provider's subject id is never a `PrincipalId`—both
 rules exist so a provider swap costs one table instead of every foreign key.
 
-**Increment 0 (DONE):** Grant.sourceIds now gates all nine store methods, held complete by
-`grant-completeness.test.ts`.
+**Increments 0-1 (DONE):** Increment 0: Grant.sourceIds now gates all nine store methods, held complete
+by `grant-completeness.test.ts`. Increment 1: Agent tokens on stdio, MCP server authenticated, bootstrap scripts,
+auth tables and AuthStore implementation.
 
-**Increments 1-3 open:** agent tokens on stdio, human sessions, Agent Access screen + access log.
+**Stdio tokens caveat:** Over stdio, a token buys attribution, narrowing (per-agent Grant.sourceIds), and revocation,
+but NOT confidentiality—anyone who can launch the server can read `.env` and reach Postgres directly. When remote
+HTTP transport arrives, token confidentiality is protected by TLS + rate limiting, but the signature of `scopeFromAgentToken`
+does not change.
+
+**Increments 2-3 open:** human sessions with Supabase Auth, Agent Access screen + access log.

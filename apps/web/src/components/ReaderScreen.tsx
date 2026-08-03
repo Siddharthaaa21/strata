@@ -72,10 +72,30 @@ export function ReaderScreen({
           </div>
         </div>
 
-        {/* Dead-end visual per docs/plan/02-milestones.md — no onClick, no agent invocation. */}
-        <div className={styles.cta} style={{ background: accent.default }}>
+        {/*
+          R8: "Ask agent about this" is a feature drawn as a button. The handoff specifies a filled
+          accent CTA and nothing behind it — which agent, whose credentials, what happens to the
+          response, whether it is stored. None of that is decided.
+
+          It shipped looking live, and a reader duly clicked it and got nothing. The register's own
+          instruction is "do not let it ship looking functional", so the fix is not to wire it up —
+          that would be inventing the feature — but to stop it lying. A real disabled button, an
+          honest label, and one line saying why. The handoff's geometry is kept so the layout still
+          matches; only the affordance changes.
+        */}
+        <button
+          type="button"
+          className={styles.cta}
+          disabled
+          aria-describedby="cta-note"
+          style={{ background: accent.default }}
+        >
           Ask agent about this
-        </div>
+        </button>
+        <p id="cta-note" className={styles.ctaNote}>
+          Not built yet — this needs a decision about which agent runs, under whose credentials, and
+          what happens to the answer.
+        </p>
       </div>
     </div>
   );
