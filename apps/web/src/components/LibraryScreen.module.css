@@ -49,3 +49,8 @@
   grid-template-columns: var(--library-grid);
   gap: var(--library-gap);
 }
+
+/* The "showing N of M" note. Quieter than the count it qualifies — it is a caveat, not a headline. */
+.truncationNote {
+  color: var(--ink-faint);
+}

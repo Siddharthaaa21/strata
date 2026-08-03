@@ -130,8 +130,18 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
 
 **Done when** the Library search box returns real ranked results. — **Met.**
 
-Carried out of M4: `docs.list` clamps to `MAX_RESULTS` (50), which is correct as an anti-exfiltration
-ceiling for an agent and wrong as a page size for a human. The Library shows at most 50 documents,
+Carried out of M4, **partially closed 2026-08-02**: `docs.list` clamps to `MAX_RESULTS` (50), which
+is correct as an anti-exfiltration ceiling for an agent and wrong as a page size for a human.
+
+Closed: the Library now reports the true total via `docs.count`, builds its filter pills from
+`docs.folders` rather than from the clamped page — a folder whose documents all fell outside the
+newest fifty previously had no pill, so the control that would have surfaced them was hidden by the
+same truncation that hid them — and states plainly when it is showing a subset.
+
+Still open: pagination itself. The handoff has no design for it, so the screen is honest about the
+limit rather than inventing controls. That is a design question, not an implementation one.
+
+Original note follows. The Library shows at most 50 documents,
 reports that count as the vault size, and derives its folder pills from the same 50 — so a folder
 whose documents are all older than the 50th disappears from the UI. Needs pagination, which is a
 design question the handoff does not answer.

@@ -114,11 +114,26 @@ export interface SourceListItem {
 export async function loadLibrary(): Promise<{
   docs: DocListItem[];
   sources: SourceListItem[];
+  /** The real number in scope, which is NOT `docs.length` — that is one clamped page. */
+  total: number;
+  /** Every folder in scope, not just those represented in the page above. */
+  folders: string[];
 }> {
   const { docs, sources, scope } = vault();
-  const [rows, srcs] = await Promise.all([docs.list(scope), sources.list(scope)]);
+  // Count and folders are queried separately and deliberately. `list` is clamped to MAX_RESULTS, so
+  // deriving either from its result describes the page rather than the vault — which is how the
+  // Library came to report "50 docs" for a 312-document workspace and to hide any folder whose
+  // documents all fell outside the newest fifty.
+  const [rows, srcs, total, folders] = await Promise.all([
+    docs.list(scope),
+    sources.list(scope),
+    docs.count(scope),
+    docs.folders(scope),
+  ]);
 
   return {
+    total,
+    folders: [...folders],
     docs: rows.map((d) => ({
       id: d.id,
       sourceId: d.sourceId,

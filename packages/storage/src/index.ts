@@ -248,6 +248,23 @@ export interface DocStore {
    * recency, which is the only sensible default when the user has not asked for anything specific.
    */
   list(scope: Scope, options?: { readonly folder?: string; readonly limit?: number }): Promise<readonly DocSummary[]>;
+  /**
+   * How many documents are in scope, ignoring `MAX_RESULTS`.
+   *
+   * `list` is clamped, so `rows.length` is the size of a PAGE, not of the vault. The Library was
+   * rendering that clamped number as "N docs" — a workspace with 312 documents reported "50 docs",
+   * which is not a truncation the user can even see, let alone act on. A count is one cheap query
+   * and it is the difference between a UI that is limited and one that is lying.
+   */
+  count(scope: Scope, options?: { readonly folder?: string }): Promise<number>;
+  /**
+   * Every distinct folder in scope, ignoring `MAX_RESULTS`.
+   *
+   * Same defect, worse consequence: the Library derived its filter pills from the clamped page, so a
+   * folder whose documents were all older than the 50th vanished from the UI entirely — the filter
+   * that would have revealed them was itself hidden by the truncation.
+   */
+  folders(scope: Scope): Promise<readonly string[]>;
   get(scope: Scope, id: DocId): Promise<Visible<Doc> & { readonly body: string }>;
 }
 
@@ -330,6 +347,30 @@ export function createDocStore(db: SqlDriver): DocStore {
       const storedId = rows[0]?.id as DocId | undefined;
       if (!storedId) throw new Error('upsert returned no id');
       return storedId;
+    },
+
+    async count(scope, options = {}) {
+      const { workspaceId, sourceIds } = scopeFilter(scope);
+      const { rows } = await db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM docs
+          WHERE workspace_id = $1
+            AND ($2::text[] IS NULL OR source_id = ANY($2::text[]))
+            AND ($3::text IS NULL OR folder = $3::text)`,
+        [workspaceId, sourceIds === undefined ? null : [...sourceIds], options.folder ?? null],
+      );
+      return rows[0]?.n ?? 0;
+    },
+
+    async folders(scope) {
+      const { workspaceId, sourceIds } = scopeFilter(scope);
+      const { rows } = await db.query<{ folder: string }>(
+        `SELECT DISTINCT folder FROM docs
+          WHERE workspace_id = $1
+            AND ($2::text[] IS NULL OR source_id = ANY($2::text[]))
+          ORDER BY folder`,
+        [workspaceId, sourceIds === undefined ? null : [...sourceIds]],
+      );
+      return rows.map((r) => r.folder);
     },
 
     async findKnown(scope, sourceId, externalId) {
