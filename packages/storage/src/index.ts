@@ -135,6 +135,12 @@ CREATE TABLE IF NOT EXISTS grants (
 CREATE UNIQUE INDEX IF NOT EXISTS grants_one_active
   ON grants (workspace_id, principal_id) WHERE revoked_at IS NULL;
 
+-- Referenceable target for the composite foreign key below. Redundant with the primary key on its
+-- own, and that is the point: it lets a child row require that a grant belongs to a named principal.
+ALTER TABLE grants DROP CONSTRAINT IF EXISTS grants_principal_identity;
+ALTER TABLE grants ADD CONSTRAINT grants_principal_identity
+  UNIQUE (workspace_id, id, principal_id);
+
 CREATE TABLE IF NOT EXISTS agent_tokens (
   -- NOT workspace-scoped, and this is the one deliberate exception to the leading-workspace_id
   -- convention: it is the lookup key used BEFORE any workspace is known. That is the whole point of
@@ -149,7 +155,19 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
   created_at   timestamptz NOT NULL,
   expires_at   timestamptz,
   last_used_at timestamptz,
-  revoked_at   timestamptz
+  revoked_at   timestamptz,
+
+  -- A token may only point at a grant belonging to ITS OWN principal.
+  --
+  -- Without this, re-pointing grant_id at another principal's grant let a token inherit that
+  -- grant's scope — a narrowed agent widened to the whole workspace by editing one column, and the
+  -- application check meant to catch it was comparing a value with itself. That check is fixed too;
+  -- this makes the bad row unwritable rather than merely detected, which matters because the write
+  -- is one an operator is led toward: the one-active-grant index forces revoke-then-insert to
+  -- re-scope an agent, and that leaves grant_id pointing at a revoked row.
+  CONSTRAINT agent_tokens_grant_belongs_to_principal
+    FOREIGN KEY (workspace_id, grant_id, principal_id)
+    REFERENCES grants (workspace_id, id, principal_id)
 );
 
 -- Additive migrations for databases created before a column existed. CREATE TABLE IF NOT EXISTS is

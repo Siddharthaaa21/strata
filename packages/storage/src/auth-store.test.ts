@@ -247,3 +247,58 @@ test('creating an agent is atomic — no principal without a grant and a token',
   );
   assert.deepEqual(counts.map((c) => c.rows[0]?.n), [1, 1, 1]);
 });
+
+test('a token cannot point at another principal grant — the database refuses the row', async () => {
+  // This was a privilege-escalation primitive. The token row and the grant row each carry a
+  // principal_id, and mintScope exists partly to check they agree — but lookupToken built the Grant
+  // with the TOKEN's value, so the check compared a value with itself and could never fire. A token
+  // for a narrowed principal, re-pointed at an unnarrowed grant, reached the whole workspace.
+  //
+  // The write is one an operator is led toward: grants_one_active forces revoke-then-insert to
+  // re-scope an agent, which leaves grant_id pointing at a revoked row, and the obvious manual fix
+  // is to repoint it. So detection was not enough — the row is now unwritable.
+  const { db, store } = await fresh();
+  const narrowed = await store.createAgent(agent({ sourceIds: [SRC] }));
+  const unnarrowed = await store.createAgent(agent({ displayName: 'wide open' }));
+
+  const { rows } = await db.query<{ id: string }>(
+    'SELECT id FROM grants WHERE principal_id = $1',
+    [unnarrowed.principalId],
+  );
+  const foreignGrant = rows[0]!.id;
+
+  await assert.rejects(
+    () =>
+      db.query('UPDATE agent_tokens SET grant_id = $1 WHERE principal_id = $2', [
+        foreignGrant,
+        narrowed.principalId,
+      ]),
+    'repointing a token at a foreign grant must violate the composite foreign key',
+  );
+});
+
+test('the scope carries the GRANT own principal, so mintScope is a live check', async () => {
+  // Even with the constraint in place, lookupToken must read g.principal_id rather than
+  // t.principal_id — otherwise mintScope's comparison is documentation of a check, not a check.
+  const { store, auth } = await fresh();
+  const { principalId, presented } = await store.createAgent(agent({ sourceIds: [SRC] }));
+
+  const scope = await auth.scopeFromAgentToken(presented);
+  assert.equal(scope.grant.principalId, principalId, 'the grant names the principal it belongs to');
+  assert.equal(scope.principal.id, principalId);
+  assert.deepEqual([...(scope.grant.sourceIds ?? [])], [SRC], 'and the narrowing is the grant own');
+});
+
+test('an unrepresentable expiry fails closed as Unauthorized, not InternalError', async () => {
+  // Postgres has infinity and -infinity. new Date(±Infinity).toISOString() throws a RangeError,
+  // which escaped lookupToken as neither AuthError nor ToolError and surfaced as InternalError —
+  // a credential-rejection path that did not collapse to one word, which is the property this
+  // layer claims. Unparseable is treated as expired: a value we cannot read is not evidence of
+  // validity.
+  const { db, store, auth } = await fresh();
+  const { presented } = await store.createAgent(agent());
+  await db.query("UPDATE agent_tokens SET expires_at = 'infinity'");
+
+  const kind = await auth.scopeFromAgentToken(presented).then(() => null, (e: AuthError) => e.kind);
+  assert.equal(kind, 'expired');
+});

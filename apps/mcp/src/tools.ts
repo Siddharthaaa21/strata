@@ -101,11 +101,31 @@ export async function searchDocs(
   store: ReadonlyDocStore,
   input: { query?: unknown; limit?: unknown },
 ) {
+  // The published `inputSchema` is documentation, not enforcement.
+  //
+  // `server.ts` uses the low-level `setRequestHandler(CallToolRequestSchema)`, which validates the
+  // JSON-RPC envelope and does NOT check arguments against the tool's own schema. So `minimum`,
+  // `maximum`, `type: integer` and `additionalProperties: false` are all decorative unless the
+  // handler re-states them — and it did not. A `limit` of 2.5 passed the `typeof === 'number'`
+  // check, reached Postgres, and came back as `InternalError`: a caller could not tell "I sent a
+  // bad argument" from "the server has a bug", and driver errors were reachable from tool input.
   if (typeof input.query !== 'string' || input.query.trim() === '') {
     throw new ToolError('InvalidInput');
   }
-  if (input.limit !== undefined && typeof input.limit !== 'number') {
-    throw new ToolError('InvalidInput');
+  // Oversized is CLAMPED, not rejected — the tool's own description promises "clamped to N
+  // regardless of the value sent", and a schema `maximum` that rejects would make the server
+  // contradict its published contract. Non-integer and below-range are rejected, because those are
+  // caller mistakes with no sensible interpretation, and 2.5 previously reached Postgres.
+  if (input.limit !== undefined) {
+    if (typeof input.limit !== 'number' || !Number.isInteger(input.limit) || input.limit < 1) {
+      throw new ToolError('InvalidInput');
+    }
+  }
+  // `additionalProperties: false`, actually applied. An unrecognized argument is a caller bug worth
+  // reporting rather than silently ignoring — and silently ignoring is how a typo'd `limit` looks
+  // like the server disregarding it.
+  for (const key of Object.keys(input)) {
+    if (key !== 'query' && key !== 'limit') throw new ToolError('InvalidInput');
   }
 
   // The store clamps too; doing it here as well means a transport that bypasses the schema still
