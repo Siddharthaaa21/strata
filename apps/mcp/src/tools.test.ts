@@ -180,3 +180,36 @@ test('tool descriptions contain no interpolated content', () => {
     assert.ok(schema.description.length < 400, 'descriptions stay short and fixed');
   }
 });
+
+test('the published inputSchema is actually enforced, not decorative', async () => {
+  // server.ts uses the low-level request handler, which does not validate arguments against a
+  // tool's own schema — so every constraint the schema advertises has to be re-stated here or it
+  // is a promise the server does not keep. A non-integer limit previously reached Postgres and
+  // came back as InternalError, which tells a caller nothing and makes a driver error reachable
+  // from tool input.
+  const { store } = await seeded();
+  const scope = scopeFor(WS_A);
+
+  for (const bad of [2.5, 0, -1, '10', NaN]) {
+    await assert.rejects(
+      () => searchDocs(scope, store, { query: 'retry', limit: bad as never }),
+      (e: Error) => e.message === 'InvalidInput',
+      `limit=${String(bad)} must be InvalidInput, never InternalError`,
+    );
+  }
+
+  // additionalProperties: false, applied rather than advertised.
+  await assert.rejects(
+    () => searchDocs(scope, store, { query: 'retry', evil: 1 } as never),
+    (e: Error) => e.message === 'InvalidInput',
+  );
+
+  // Oversized is CLAMPED, not rejected — the description promises exactly that, and a server that
+  // contradicts its own published contract is worse than one that is merely strict.
+  const clamped = await searchDocs(scope, store, { query: 'retry', limit: MAX_RESULTS + 500 });
+  assert.ok(clamped.results.length <= MAX_RESULTS);
+
+  // And the valid boundaries still work.
+  assert.ok(await searchDocs(scope, store, { query: 'retry', limit: 1 }));
+  assert.ok(await searchDocs(scope, store, { query: 'retry', limit: MAX_RESULTS }));
+});

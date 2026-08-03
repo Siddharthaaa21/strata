@@ -116,30 +116,29 @@ const parse = (r: unknown) => JSON.parse(text(r)) as Record<string, unknown>;
  * A guard that inspects one of three channels is not a guard, and the header of this file claims it
  * catches any future tool. That claim only becomes true here.
  */
-function allPayloads(res: unknown): unknown[] {
-  const out: unknown[] = [];
-  const r = res as { content?: { type?: string; text?: string }[]; structuredContent?: unknown };
-
-  for (const entry of r.content ?? []) {
-    if (typeof entry.text !== 'string') continue;
-    try {
-      out.push(JSON.parse(entry.text));
-    } catch {
-      // Not JSON — inspect the raw string rather than skipping it. A tool returning an unfenced
-      // body as plain text is exactly the leak this suite exists to catch.
-      out.push(entry.text);
-    }
-  }
-  if (r.structuredContent !== undefined) out.push(r.structuredContent);
-  return out;
-}
-
 const NONCE_OPEN = /<untrusted-document nonce="([0-9a-f]{16})">/;
 
-/** A `content` value counts as safe only if it is genuinely inside a matched nonce envelope. */
-function isNonceFenced(value: string): boolean {
+/**
+ * Is EVERY occurrence of `marker` inside a matched nonce envelope?
+ *
+ * The previous version asked only whether an envelope existed *somewhere* in the string, which is a
+ * different question and a much weaker one. A tool returning
+ * `"Title: <title>\nFolder: <folder>\n" + fence(body)` satisfied it while leaking two fields in
+ * plain text above the envelope — the exact shape the guard was written to stop, re-opened by
+ * appending a correctly-fenced body after it.
+ */
+function everyOccurrenceIsFenced(value: string, marker: string): boolean {
   const match = NONCE_OPEN.exec(value);
-  return match !== null && value.includes(`</untrusted-document nonce="${match[1]}">`);
+  if (match === null) return false;
+
+  const openAt = value.indexOf(match[0]) + match[0].length;
+  const closeAt = value.indexOf(`</untrusted-document nonce="${match[1]}">`);
+  if (closeAt < 0) return false;
+
+  for (let i = value.indexOf(marker); i !== -1; i = value.indexOf(marker, i + 1)) {
+    if (i < openAt || i >= closeAt) return false;
+  }
+  return true;
 }
 
 /**
@@ -149,10 +148,30 @@ function isNonceFenced(value: string): boolean {
  * `tags` — which is what `untrustedFields` names.
  */
 function stringLeaves(v: unknown, key = '', out: { key: string; value: string }[] = []) {
-  if (typeof v === 'string') out.push({ key, value: v });
-  else if (Array.isArray(v)) for (const x of v) stringLeaves(x, key, out);
-  else if (v !== null && typeof v === 'object') {
-    for (const [k, x] of Object.entries(v)) stringLeaves(x, k, out);
+  if (typeof v === 'string') {
+    // A string that parses as JSON is a CONTAINER, not a leaf. Tools serialize their payload into
+    // `content[].text`, so the raw string legitimately contains every field — checking it as a leaf
+    // would report the whole response as leaking under the key "text". Its contents are the
+    // channels; recurse into them and drop the wrapper.
+    const trimmed = v.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        stringLeaves(JSON.parse(trimmed), key, out);
+        return out;
+      } catch {
+        /* not JSON after all — fall through and treat it as a leaf */
+      }
+    }
+    out.push({ key, value: v });
+  } else if (Array.isArray(v)) {
+    for (const x of v) stringLeaves(x, key, out);
+  } else if (v !== null && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      // KEYS are a channel too. A tool returning `{"<title>": 1}` puts ingested content in the key
+      // position, where a values-only walk never looks.
+      out.push({ key: k, value: k });
+      stringLeaves(x, k, out);
+    }
   }
   return out;
 }
@@ -184,52 +203,76 @@ const LOADED = {
   ].join('\n'),
 };
 
-/** The whole point of the suite. Applies to any tool, present or future. */
-function assertEveryMarkerIsDeclared(payload: unknown, where: string) {
-  // Deliberately conditional on actually carrying content. `list_sources` returns operator config
-  // — connector name, kind, status — none of it ingested, so requiring a declaration there would be
-  // cargo cult: a `untrustedFields` on a payload with nothing untrusted in it teaches a reader that
-  // the field is boilerplate. The invariant is "no ingested content in an undeclared field", and a
-  // response carrying no ingested content satisfies it trivially.
-  //
-  // The gap that leaves, recorded because this test cannot see it: if a connector ever writes a
-  // REMOTE-supplied source name (a GitHub repo description, say), `list_sources` becomes a content
-  // channel with no fence and no marker planted here to catch it. That is an M5 problem — no
-  // connector exists yet — and it is in the risk register rather than papered over with an
-  // assertion that would pass today for the wrong reason.
-  const declared = (
-    Array.isArray((payload as Record<string, unknown>)['untrustedFields'])
-      ? (payload as Record<string, unknown>)['untrustedFields']
-      : []
-  ) as string[];
+/**
+ * The invariant is "no ingested content in an undeclared field", so a response carrying no ingested
+ * content satisfies it trivially. `list_sources` returns operator config — connector name, kind,
+ * status — none of it ingested, and demanding an `untrustedFields` on a payload with nothing
+ * untrusted in it would teach a reader the field is boilerplate.
+ *
+ * The gap that leaves, recorded because this suite cannot see it: if a connector ever writes a
+ * REMOTE-supplied source name, `list_sources` becomes a content channel with no fence and no marker
+ * planted here to catch it. That is an M5 problem — no connector exists yet — and it belongs in the
+ * risk register rather than behind an assertion that would pass today for the wrong reason.
+ */
+/**
+ * Applies the invariant to the ENTIRE result object.
+ *
+ * Not to an enumerated set of channels. The previous version listed `content[].text` and
+ * `structuredContent`, and a reviewer walked four tool shapes through the gaps: an embedded
+ * `resource` block (no top-level `.text`, so it was skipped), a `resource_link`, `_meta`, and
+ * content placed in JSON *keys*.
+ *
+ * Listing channels is the same mistake as listing Unicode carriers, one layer up — and it failed
+ * the same way, twice. The result is one object; walk all of it. A channel invented by a future MCP
+ * revision is covered without an edit here, which is the only version of this claim worth making.
+ *
+ * `untrustedFields` is read from wherever it appears, since the declaration and the data it
+ * describes travel together in whichever payload carries them.
+ */
+function assertResultIsClean(res: unknown, where: string) {
+  const leaves = stringLeaves(res);
+  assert.ok(leaves.length > 0, `${where}: returned no inspectable payload`);
 
-  for (const leaf of stringLeaves(payload)) {
-    // `untrustedFields` itself lists field NAMES, never values; skip it or it matches its own list.
+  // Only names appearing inside an actual `untrustedFields` array count as declared — a field is
+  // not excused by a string that merely happens to equal its name.
+  const declared = new Set<string>();
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+    } else if (v !== null && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v)) {
+        if (k === 'untrustedFields' && Array.isArray(x)) {
+          for (const name of x) if (typeof name === 'string') declared.add(name);
+        } else {
+          walk(x);
+        }
+      }
+    } else if (typeof v === 'string') {
+      const t = v.trim();
+      if (t.startsWith('{') || t.startsWith('[')) {
+        try {
+          walk(JSON.parse(t));
+        } catch {
+          /* not JSON */
+        }
+      }
+    }
+  };
+  walk(res);
+
+  for (const leaf of leaves) {
     if (leaf.key === 'untrustedFields') continue;
     for (const marker of Object.values(M)) {
       if (!leaf.value.includes(marker)) continue;
-
-      // `content` is NOT a free pass. The previous version whitelisted any key with that name,
-      // fenced or not — so deleting `fence()` from get_doc, or inventing a `summarize_doc` that
-      // returned `title + body` under a `content` key, both sailed through. The envelope has to
-      // actually be there, with a matched nonce.
-      const fencedBody = leaf.key === 'content' && isNonceFenced(leaf.value);
-
+      const fencedBody = leaf.key === 'content' && everyOccurrenceIsFenced(leaf.value, marker);
       assert.ok(
-        declared.includes(leaf.key) || fencedBody,
+        declared.has(leaf.key) || fencedBody,
         `${where}: ingested content (${marker}) surfaced in "${leaf.key}", which is neither ` +
-          `declared in untrustedFields (${declared.join(', ') || 'none declared'}) nor inside a ` +
+          `declared untrusted (${[...declared].join(', ') || 'nothing declared'}) nor inside a ` +
           `nonce envelope`,
       );
     }
   }
-}
-
-/** Applies the invariant to every payload channel a result can use. */
-function assertResultIsClean(res: unknown, where: string) {
-  const payloads = allPayloads(res);
-  assert.ok(payloads.length > 0, `${where}: returned no inspectable payload`);
-  for (const [i, p] of payloads.entries()) assertEveryMarkerIsDeclared(p, `${where}[payload ${i}]`);
 }
 
 /**

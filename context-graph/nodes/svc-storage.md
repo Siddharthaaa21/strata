@@ -37,6 +37,8 @@ grant per principal. AuthStore implementation: lookupToken is ONE indexed query 
 touchToken rate-limited to once per minute. ReadonlySourceStore and ReadonlyDocStore types exported so MCP server
 can depend only on read operations by type.
 
+M7R4 (HIGH privilege escalation + MED timestamp handling): `lookupToken` query now selects `g.principal_id` instead of the TOKEN row's `principal_id`, so `mintScope`'s check performs a live validation that cannot be bypassed by re-pointing an `agent_tokens` row to another principal's grant. Composite FK `agent_tokens (workspace_id, grant_id, principal_id) REFERENCES grants (workspace_id, id, principal_id)` plus unique constraint prevents the bad row from being written. The FK is load-bearing because revoke-then-insert to re-scope an agent leaves grant_id dangling; the FK ensures the insert re-validates the pair. Also: Postgres `infinity`/`-infinity` expiry now fails closed as expired instead of throwing RangeError on `new Date(v).toISOString()`, collapsing to `Unauthorized` rather than leaking `InternalError`.
+
 New `external_id` column on `import_events` table, populated by `runIngest` on every event. Migration uses
 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` because `CREATE TABLE IF NOT EXISTS` is a no-op on an existing
 database — the live database would otherwise never get the column. This pattern generalizes: tests always start

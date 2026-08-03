@@ -29,3 +29,5 @@ variable. `ServerDeps.scope()` is async and called inside the try block, receivi
 authentication. `ReadonlyDocStore = Pick<DocStore, 'search'|'list'|'get'>` is now real (not planned), enforcing
 at the type level that D5's "no mutating tool exists" cannot regress. Workspace is sourced from the verified
 agent token, not from env. Still open: the strata-verifier pass that closes R2.
+
+M7R4 (MED, argument validation): Published `inputSchema` was never enforced — `server.ts` uses the low-level request handler which does not validate arguments against a tool's schema. `limit: 2.5` reached Postgres and returned `InternalError`. Now non-integer limits, out-of-range limits, and unknown arguments fail fast as `InvalidInput`. NOTE: oversized limits are CLAMPED, not rejected — the tool's own description promises "clamped regardless of the value sent", and contradicting a published contract would be worse than strict enforcement.
