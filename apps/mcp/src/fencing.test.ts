@@ -104,6 +104,45 @@ const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]!.
 const parse = (r: unknown) => JSON.parse(text(r)) as Record<string, unknown>;
 
 /**
+ * EVERY payload a tool result can carry, not just the first one.
+ *
+ * Three separate holes lived in the previous single-payload version, and a reviewer walked a tool
+ * through each of them:
+ *
+ *   - `content[0]` only, so a tool putting raw metadata in `content[1]` was invisible.
+ *   - `structuredContent` (MCP 2025-06-18) never inspected at all.
+ *   - non-JSON entries silently skipped, so a plain-text leak read as "nothing to check".
+ *
+ * A guard that inspects one of three channels is not a guard, and the header of this file claims it
+ * catches any future tool. That claim only becomes true here.
+ */
+function allPayloads(res: unknown): unknown[] {
+  const out: unknown[] = [];
+  const r = res as { content?: { type?: string; text?: string }[]; structuredContent?: unknown };
+
+  for (const entry of r.content ?? []) {
+    if (typeof entry.text !== 'string') continue;
+    try {
+      out.push(JSON.parse(entry.text));
+    } catch {
+      // Not JSON — inspect the raw string rather than skipping it. A tool returning an unfenced
+      // body as plain text is exactly the leak this suite exists to catch.
+      out.push(entry.text);
+    }
+  }
+  if (r.structuredContent !== undefined) out.push(r.structuredContent);
+  return out;
+}
+
+const NONCE_OPEN = /<untrusted-document nonce="([0-9a-f]{16})">/;
+
+/** A `content` value counts as safe only if it is genuinely inside a matched nonce envelope. */
+function isNonceFenced(value: string): boolean {
+  const match = NONCE_OPEN.exec(value);
+  return match !== null && value.includes(`</untrusted-document nonce="${match[1]}">`);
+}
+
+/**
  * Every string in a payload, labelled with its nearest object key.
  *
  * Array elements inherit the array's key rather than an index, so a marker inside `tags` reports as
@@ -120,6 +159,7 @@ function stringLeaves(v: unknown, key = '', out: { key: string; value: string }[
 
 // One marker per content-derived channel. Distinct so a failure names the channel that leaked.
 const M = {
+  path: 'ZQPATHQZ',
   title: 'ZQTITLEQZ',
   excerpt: 'ZQEXCERPTQZ',
   folder: 'ZQFOLDERQZ',
@@ -128,7 +168,9 @@ const M = {
 };
 
 const LOADED = {
-  'loaded.md': [
+  // The filename carries a marker too: external_id is attacker-supplied and a tool returning
+  // it would leak a path the marker sweep previously could not see.
+  'loaded-ZQPATHQZ.md': [
     '---',
     `title: "Runbook ${M.title}"`,
     `description: "Summary ${M.excerpt}"`,
@@ -143,7 +185,7 @@ const LOADED = {
 };
 
 /** The whole point of the suite. Applies to any tool, present or future. */
-function assertEveryMarkerIsDeclared(payload: Record<string, unknown>, where: string) {
+function assertEveryMarkerIsDeclared(payload: unknown, where: string) {
   // Deliberately conditional on actually carrying content. `list_sources` returns operator config
   // — connector name, kind, status — none of it ingested, so requiring a declaration there would be
   // cargo cult: a `untrustedFields` on a payload with nothing untrusted in it teaches a reader that
@@ -155,20 +197,39 @@ function assertEveryMarkerIsDeclared(payload: Record<string, unknown>, where: st
   // channel with no fence and no marker planted here to catch it. That is an M5 problem — no
   // connector exists yet — and it is in the risk register rather than papered over with an
   // assertion that would pass today for the wrong reason.
-  const declared = (Array.isArray(payload['untrustedFields']) ? payload['untrustedFields'] : []) as string[];
+  const declared = (
+    Array.isArray((payload as Record<string, unknown>)['untrustedFields'])
+      ? (payload as Record<string, unknown>)['untrustedFields']
+      : []
+  ) as string[];
 
   for (const leaf of stringLeaves(payload)) {
     // `untrustedFields` itself lists field NAMES, never values; skip it or it matches its own list.
     if (leaf.key === 'untrustedFields') continue;
     for (const marker of Object.values(M)) {
       if (!leaf.value.includes(marker)) continue;
+
+      // `content` is NOT a free pass. The previous version whitelisted any key with that name,
+      // fenced or not — so deleting `fence()` from get_doc, or inventing a `summarize_doc` that
+      // returned `title + body` under a `content` key, both sailed through. The envelope has to
+      // actually be there, with a matched nonce.
+      const fencedBody = leaf.key === 'content' && isNonceFenced(leaf.value);
+
       assert.ok(
-        declared.includes(leaf.key) || leaf.key === 'content',
+        declared.includes(leaf.key) || fencedBody,
         `${where}: ingested content (${marker}) surfaced in "${leaf.key}", which is neither ` +
-          `declared in untrustedFields (${declared.join(', ') || 'none declared'}) nor the fenced body`,
+          `declared in untrustedFields (${declared.join(', ') || 'none declared'}) nor inside a ` +
+          `nonce envelope`,
       );
     }
   }
+}
+
+/** Applies the invariant to every payload channel a result can use. */
+function assertResultIsClean(res: unknown, where: string) {
+  const payloads = allPayloads(res);
+  assert.ok(payloads.length > 0, `${where}: returned no inspectable payload`);
+  for (const [i, p] of payloads.entries()) assertEveryMarkerIsDeclared(p, `${where}[payload ${i}]`);
 }
 
 /**
@@ -186,7 +247,7 @@ async function callEveryTool(client: Client, docId: string) {
   const { tools } = await client.listTools();
   assert.ok(tools.length > 0, 'the server advertises at least one tool');
 
-  const out: { name: string; payload: Record<string, unknown> }[] = [];
+  const out: { name: string; res: unknown }[] = [];
   for (const tool of tools) {
     const props = (tool.inputSchema?.['properties'] ?? {}) as Record<string, unknown>;
     const args: Record<string, unknown> = {};
@@ -197,7 +258,7 @@ async function callEveryTool(client: Client, docId: string) {
 
     const res = await client.callTool({ name: tool.name, arguments: args });
     assert.ok(!(res as { isError?: boolean }).isError, `${tool.name} returned a usable response`);
-    out.push({ name: tool.name, payload: parse(res) });
+    out.push({ name: tool.name, res });
   }
   return out;
 }
@@ -213,8 +274,8 @@ test('no advertised tool surfaces ingested content in an undeclared field', asyn
     'the enumeration actually reached the content-bearing tools',
   );
 
-  for (const { name, payload } of responses) {
-    assertEveryMarkerIsDeclared(payload, name);
+  for (const { name, res } of responses) {
+    assertResultIsClean(res, name);
   }
 });
 

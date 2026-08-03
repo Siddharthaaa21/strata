@@ -149,15 +149,24 @@ export async function persistIngest(
     return canonical === undefined ? e : { ...e, docId: canonical };
   });
 
-  const decisions = result.decisions.map((d) => {
-    const canonical = persisted.reconciled.get(d.docId);
-    return canonical === undefined ? d : { ...d, docId: canonical };
-  });
+  // A decision whose write failed did not happen. Dropping it keeps `decisions` a record of what is
+  // actually in the vault rather than of what was intended — the same reason the event is rewritten.
+  const decisions = result.decisions
+    .filter((d) => !failedIds.has(d.pending.externalId))
+    .map((d) => {
+      const canonical = persisted.reconciled.get(d.docId);
+      return canonical === undefined ? d : { ...d, docId: canonical };
+    });
 
-  const counts = {
-    ...result.counts,
-    failed: result.counts.failed + persisted.failed.length,
-  };
+  // And the counts have to move with them. Incrementing `failed` alone left `new 3 ... failed 1`
+  // printed next to `written 2` for three files — a total of four, which is the kind of arithmetic
+  // that makes an operator distrust every other number on the screen.
+  const counts = { ...result.counts };
+  for (const d of result.decisions) {
+    if (!failedIds.has(d.pending.externalId)) continue;
+    counts[d.outcome] = Math.max(0, counts[d.outcome] - 1);
+    counts.failed += 1;
+  }
 
   return { ...result, decisions, events, counts, ...persisted };
 }

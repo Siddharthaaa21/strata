@@ -115,10 +115,39 @@ deny-all. No `workspaceId` or `credentialRef` reaches any client payload, traced
 object construction rather than declared types. The nonce is unforgeable and unpredictable. No
 mutating tool exists. Search weights match ADR 0004 exactly.
 
-**Still open — this is what now closes R2:** the fixes above have not themselves been independently
-reviewed. Re-running the same three passes against the fixed code is the remaining step, and it is
-not a formality: fixes written by the person who read the findings have the same authorship problem
-the original defenses did.
+**Rounds two and three then broke the fixes.** That prediction — that a fix written by whoever read
+the findings inherits the same authorship problem — was correct twice more, and the pattern is the
+most useful thing in this entry:
+
+| Round | What it found | The shape of the mistake |
+| --- | --- | --- |
+| 1 | `get_doc` unfenced; Unicode Tag block not stripped | Tested the channels and carriers the author had thought of |
+| 2 | Round 1's fixes did not do what four documents claimed. Variation selectors carried the identical payload; the fencing guard hardcoded two tool names and could not see a new tool | Fixed the *instance*, then asserted the *class* was covered |
+| 3 | **3,737** default-ignorable codepoints still surviving, including a contiguous block encoding all printable ASCII; the fencing guard bypassable four more ways; a ReDoS "fix" that a chunked payload walks straight past | Same again — and the round-2 test *named itself* a property test while being a 26-element list |
+
+**The lesson, stated plainly because it cost three rounds:** every one of these was a list pretending
+to be a property. `STRIPPED_RANGES` is now `\p{Default_Ignorable_Code_Point}` + `\p{Bidi_Control}`
+queried from the engine's own Unicode database — ~4,174 codepoints instead of 26, and a future
+Unicode revision is covered when the runtime updates rather than when someone remembers. The test
+sweeps all 1.1M codepoints instead of listing examples. The fencing guard inspects every payload
+channel a tool result can use rather than the first one. **If a test can be satisfied by an
+enumeration, it is not testing the property it claims to test.**
+
+Two further notes from round 3 worth keeping:
+
+- The ReDoS fix in `MarkdownBody` was wrong twice over — a per-call cap is not a document bound
+  (chunking walked past it, 25.8s), and its comment claimed the code runs in the browser when it is
+  an async Server Component, so a hang blocks the Node event loop for *every* concurrent request.
+  Getting the threat model backwards is what made an inadequate fix look adequate. The tokenizer is
+  now extracted to a `.ts` file, because Node strips types but does not transform JSX — the defect
+  survived partly because it lived where `node --test` could not reach it.
+- Round 3 confirmed a set of things as genuinely closed, which is worth recording so they are not
+  re-litigated: NFC output, every metadata bound that crosses the wire, token parsing against
+  adversarial input, `createAgent` atomicity, and the timing oracle (refuted as usable — the *known*
+  id is slower, and by ~10%).
+
+**Still open — this is what now closes R2:** a fourth independent pass over the round-3 fixes. The
+same argument applies, and three rounds of evidence say it is not a formality.
 
 **Also open, deliberately not fixed in this pass** (recorded so they are not mistaken for oversights):
 ADR 0005 section 5's response logging is still unimplemented, so an injection that succeeds leaves no

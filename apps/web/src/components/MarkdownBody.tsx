@@ -1,4 +1,5 @@
 import styles from './ReaderScreen.module.css';
+import { newInlineBudget, tokenizeInline, type InlineBudget } from './markdown-inline.ts';
 
 /**
  * A small Markdown renderer for the reader.
@@ -29,48 +30,24 @@ type Inline = React.ReactNode;
  * sentence. Links become plain text rather than anchors on purpose: an ingested document's URL is
  * attacker-controlled, and a live link is a navigation primitive we have not decided to grant.
  */
-function inline(text: string, keyPrefix: string): Inline[] {
-  // Above this, render as plain text and skip inline parsing entirely.
-  //
-  // The link alternative below (`\[[^\]\n]*\]\([^)\n]*\)`) is quadratic on unbalanced brackets, the
-  // same shape as the ingest-side stripper: every `[` starts an attempt that scans to the end and
-  // backtracks. Document bodies are untrusted and bounded only by the 2 MiB ingest cap, and unlike
-  // the ingest path this code runs in the reader's browser — a hang here freezes the user's tab,
-  // not a CLI. No real prose paragraph approaches this length, so degrading to plain text costs
-  // nothing a reader would notice and removes the ceiling entirely.
-  if (text.length > 20_000) return [text];
-
-  const out: Inline[] = [];
-  const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]*\]\([^)\n]*\))/g;
-
-  let last = 0;
-  let match: RegExpExecArray | null;
-  let n = 0;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > last) out.push(text.slice(last, match.index));
-    const token = match[0];
-    const key = `${keyPrefix}i${n++}`;
-
-    if (token.startsWith('`')) {
-      out.push(
+/**
+ * Renders tokenized inline spans. Tokenizing lives in ./markdown-inline.ts so it is reachable by
+ * the test runner — Node strips types but does not transform JSX, so nothing in this file can be.
+ */
+function inline(text: string, keyPrefix: string, budget: InlineBudget): Inline[] {
+  return tokenizeInline(text, budget).map((t, i) => {
+    const key = `${keyPrefix}i${i}`;
+    if (t.kind === "code") {
+      return (
         <code key={key} className={styles.inlineCode}>
-          {token.slice(1, -1)}
-        </code>,
+          {t.text}
+        </code>
       );
-    } else if (token.startsWith('**')) {
-      out.push(<strong key={key}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith('[')) {
-      // Link text only. The href is deliberately discarded, not rendered inert-but-visible.
-      out.push(token.slice(1, token.indexOf(']')));
-    } else {
-      out.push(<em key={key}>{token.slice(1, -1)}</em>);
     }
-    last = match.index + token.length;
-  }
-
-  if (last < text.length) out.push(text.slice(last));
-  return out.length ? out : [text];
+    if (t.kind === "strong") return <strong key={key}>{t.text}</strong>;
+    if (t.kind === "em") return <em key={key}>{t.text}</em>;
+    return t.text;
+  });
 }
 
 const LIST_ITEM = /^\s*[-*+]\s+(.*)$/;
@@ -85,6 +62,8 @@ const cells = (row: string) =>
 export function MarkdownBody({ body }: { body: string }) {
   const blocks: React.ReactNode[] = [];
   const lines = body.split('\n');
+  // One budget per render, shared by every inline() call — see INLINE_BUDGET.
+  const budget = newInlineBudget();
 
   let paragraph: string[] = [];
   let inFence = false;
@@ -92,7 +71,7 @@ export function MarkdownBody({ body }: { body: string }) {
 
   const flushParagraph = (key: string) => {
     if (!paragraph.length) return;
-    blocks.push(<p key={key}>{inline(paragraph.join(' '), key)}</p>);
+    blocks.push(<p key={key}>{inline(paragraph.join(' '), key, budget)}</p>);
     paragraph = [];
   };
 
@@ -128,7 +107,7 @@ export function MarkdownBody({ body }: { body: string }) {
       // real <h1> per document body would produce two competing outlines for a screen reader.
       blocks.push(
         <div key={`h${i}`} className={styles.heading} data-level={heading[1]!.length}>
-          {inline(heading[2] ?? '', `h${i}`)}
+          {inline(heading[2] ?? '', `h${i}`, budget)}
         </div>,
       );
       continue;
@@ -157,7 +136,7 @@ export function MarkdownBody({ body }: { body: string }) {
             <thead>
               <tr>
                 {header.map((c, x) => (
-                  <th key={x}>{inline(c, `t${i}h${x}`)}</th>
+                  <th key={x}>{inline(c, `t${i}h${x}`, budget)}</th>
                 ))}
               </tr>
             </thead>
@@ -165,7 +144,7 @@ export function MarkdownBody({ body }: { body: string }) {
               {rows.map((r, y) => (
                 <tr key={y}>
                   {r.map((c, x) => (
-                    <td key={x}>{inline(c, `t${i}r${y}c${x}`)}</td>
+                    <td key={x}>{inline(c, `t${i}r${y}c${x}`, budget)}</td>
                   ))}
                 </tr>
               ))}
@@ -200,7 +179,7 @@ export function MarkdownBody({ body }: { body: string }) {
         break;
       }
 
-      const rendered = items.map((item, x) => <li key={x}>{inline(item, `l${i}n${x}`)}</li>);
+      const rendered = items.map((item, x) => <li key={x}>{inline(item, `l${i}n${x}`, budget)}</li>);
       blocks.push(
         ordered ? (
           <ol key={`o${i}`} className={styles.list}>
@@ -226,7 +205,7 @@ export function MarkdownBody({ body }: { body: string }) {
       }
       blocks.push(
         <blockquote key={`q${i}`} className={styles.quote}>
-          {inline(quoted.join(' '), `q${i}`)}
+          {inline(quoted.join(' '), `q${i}`, budget)}
         </blockquote>,
       );
       i = j - 1;

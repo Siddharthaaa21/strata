@@ -420,3 +420,57 @@ the graph: an unregistered store method was added and the suite went red naming 
 **Reversible?** The design is. The `sourceIds`-gates-writes half is **not** — reverting it reopens
 the write channel. `ServerDeps.scope(): Promise<Scope>` and an async `vault()` are also one-way in
 practice, since reverting means giving up the per-call lookup and with it revocation.
+
+---
+
+## D15 — Query the Unicode database; a list is never a property · 2026-08-02
+
+**Context.** Three independent review rounds hit one definition in `packages/core/src/untrusted.ts`,
+and each round beat the previous round's fix. Round 1 added the Unicode Tag block after an
+instruction was smuggled through it. Round 2 sent the identical payload through variation selectors,
+129 codepoints above where round 1 had stopped. Round 3 found **3,737 surviving default-ignorable
+codepoints**, including `U+E0080..U+E00FF` — a contiguous block encoding all of printable ASCII,
+sitting in the gap between the two ranges rounds 1 and 2 had each stopped at.
+
+**Decision.** `\p{Default_Ignorable_Code_Point}` and `\p{Bidi_Control}`, queried from the engine's
+own Unicode character database, plus explicitly-justified extras that no property covers (C0/C1
+controls; `U+2028`/`U+2029` for a structural JSON reason; `U+FFF9..FFFB`). ~4,174 codepoints instead
+of 26, and a future Unicode revision is covered when the runtime updates rather than when someone
+remembers to edit a list.
+
+**Why this took three rounds, which is the part worth keeping.** Every fix was a list pretending to
+be a property, and the giveaway was visible in the code the whole time:
+
+- Round 2's fix carried the comment "ENUMERATE THE PROPERTY, NOT THE ATTACKS" above a hand-written
+  array of 25 ranges.
+- Round 2's *test* was named `'nothing default-ignorable survives ingest — the property, not a
+  carrier list'` and its body was a 26-element array of hand-picked codepoints. It was a carrier
+  list wearing the property's name, and it passed while 3,737 carriers got through.
+- The ranges were assembled by reading character *names* rather than querying the property, which is
+  why `U+FFF9..FFFB` (not default-ignorable) was included while `U+FFF0..FFF8` (which is) was missed.
+
+**The general rule this produces:** *if a test can be satisfied by an enumeration, it is not testing
+the property it claims to test.* The sweep now iterates all 1.1M codepoints and asserts every one
+carrying the property is stripped — 14ms, which is cheap for the one assertion in this repo that has
+been wrong three times running. Applied to the fencing guard in the same change: it now inspects
+every payload channel a tool result can use rather than the first one.
+
+**A second, separate lesson from the same round.** The `MarkdownBody` ReDoS fix was wrong twice
+over: a per-call cap is not a document bound (a chunked payload walked past it at 25.8 seconds), and
+its comment asserted the code "runs in the reader's browser" when it is an async Server Component,
+so a hang blocks the Node event loop for *every* concurrent request. Getting the threat model
+backwards is what made an inadequate fix look adequate to its author. The tokenizer has been
+extracted to a `.ts` file, because Node strips types but does not transform JSX — the defect
+survived in part because it lived in a file `node --test` could not load. **Code that the test
+runner cannot reach will eventually be wrong.**
+
+**Reversible?** The property query is strictly broader than any list it replaces, so reverting
+re-opens carriers. The known cost is accepted and documented: `U+FE0F` and `U+200D` are
+default-ignorable, so an emoji may render in text style and a ZWJ sequence may split. A character
+that is invisible by definition cannot be let through on the grounds that it is usually benign.
+
+**Known limit, recorded rather than implied.** The module's stated threat — "rendered text matches
+read text" — is strictly broader than the property it implements. Homoglyphs, ideographic space,
+combining overlays, and strong-RTL script with no bidi *control* all survive and all can make the
+Library and an agent disagree. None is default-ignorable and stripping them would be wrong; you
+cannot strip Hebrew. Normalization is not the mitigation for those. The fence and the label are.

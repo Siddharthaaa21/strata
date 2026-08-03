@@ -73,6 +73,12 @@ export interface ParsedToken {
  * underscores. `split('_')` would corrupt those.
  */
 export function parseAgentToken(presented: string): ParsedToken | undefined {
+  // Type-checked before any method call. The contract above says "returns undefined on any
+  // malformed input rather than throwing", and `presented.startsWith` on a non-string throws a
+  // TypeError instead — which would escape as `InternalError`. Unreachable from the stdio
+  // entrypoint, where `process.env` yields `string | undefined` and a falsy guard runs first, but
+  // increment 2's remote transport will hand this a value parsed out of a header.
+  if (typeof presented !== 'string') return undefined;
   if (!presented.startsWith(TOKEN_PREFIX)) return undefined;
   const rest = presented.slice(TOKEN_PREFIX.length);
   const sep = rest.indexOf('_');

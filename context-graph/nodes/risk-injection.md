@@ -18,9 +18,9 @@ forgery, a mimicked preamble, instructions in title/tags/folder, bidi and zero-w
 error-channel smuggling, and NUL identity forgery. That suite passed, but an independent adversarial
 review (M4 close) found real defects: getDoc returned title/folder/tags raw with no preamble and no
 untrustedFields declaration; STRIPPED_RANGES did not cover the Tag block (U+E0000-E007F, ASCII
-smuggling) or U+2028/U+2029 (the only line terminators JSON.stringify does not escape). All fixes
-are now in place (guarantee-fencing, updated untrusted.ts, fencing.test.ts structural guard). Re-
-verification is still needed: the strata-verifier pass that closes this risk has not happened.
+smuggling) or U+2028/U+2029 (the only line terminators JSON.stringify does not escape).
+
+Round-three review (M7 close) found live defects again: the fencing guard inspected only `content[0]`, never `structuredContent`, skipped non-JSON payloads, and whitelisted any `content` key unguarded. Four tool shapes passed the suite. All defects are fixed (guarantee-fencing, updated untrusted.ts with Unicode property queries, fencing.test.ts structural guard inspecting all channels and requiring nonce envelopes). R2 still does NOT close: re-verification is still needed: the strata-verifier pass that closes this risk has not happened. These fixes are the work of the reviewer, not the author — the lesson is reading found these, not writing.
 
 One limit is recorded as a passing test rather than left implicit: plausible prose is delivered
 verbatim by design. ADR 0005 rejected stripping suspicious phrasing as unbounded and lossy, since

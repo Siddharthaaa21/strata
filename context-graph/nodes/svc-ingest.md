@@ -41,6 +41,8 @@ instead of throwing and aborting the batch. Failed documents' events are rewritt
 `failed` with sanitized `persist-failed` code, preserving the audit trail and allowing a retry to repair one
 document without re-importing others already persisted.
 
+**Counts rewriting (M7R3):** `persistIngest` now rewrites `counts` and drops failed `decisions` after persisting, matching what actually made it to storage. Previously printed "new 3 ... failed 1" for three input files next to "written 2", obscuring what persisted. Counts now reflect (written, skipped, failed) outcomes reconciled by `persistDecisions`.
+
 `canonicalize()` and `deriveExcerpt`'s link-stripper regexes replaced `.replace(/\s*$/, '\n')` and unbounded
 backtracking with `.trimEnd()` and input-bounded regex respectively, fixing ReDoS that could hang a worker on
 2 MiB of spaces. Regression tests pin wall-clock linearity.

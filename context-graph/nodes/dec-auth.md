@@ -25,6 +25,8 @@ partial unique index. Scope minted from a verified token, no caching. MCP server
 rejects unauthenticated clients with Unauthorized (not NotFound). ReadonlyDocStore enforces D5 structurally: MCP
 server cannot upsert by type.
 
+**Increment 1.5 (M7R3):** Revocation error taxonomy. `mintScope` previously threw a bare Error on grant revocation, falling through the MCP server's catch to InternalError and making revocation indistinguishable from bugs in operator logs. Translated to `AuthError('revoked')` so the third revocation lever (grant revocation) is now distinguishable from the other two (token and principal revocation) and operators see the message meant for bugs. See `packages/auth/src/index.ts`.
+
 **Increments 2-3 (OPEN):** 2 = human sessions with Supabase Auth, user_identities table, vault() async, delete localDevScope;
 3 = Agent Access screen + access log. The no-cache rule is tied to the Agent Access screen's copy
 (immediate revocation), and that rule outlives this decision. Max legitimate cache TTL = the revocation
