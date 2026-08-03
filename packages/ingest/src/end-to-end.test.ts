@@ -194,3 +194,68 @@ test('an authored tag outranks the same word guessed elsewhere', async () => {
   const hits = await store.search(scope, 'ledger');
   assert.equal(hits[0]?.title, 'Idempotent Retry Strategy');
 });
+
+test('one document failing to persist does not erase the audit trail for the rest', async () => {
+  // Persist used to throw on the first failure, which aborted the run before `events.append` ever
+  // ran — so a single bad document left ZERO rows in import_events, including for the documents
+  // already written. The state was invisible in the database and in the Import screen at once.
+  const db = new PGlite() as unknown as SqlDriver;
+  await migrate(db);
+  const real = createDocStore(db);
+
+  const flaky = {
+    ...real,
+    async upsert(s: Parameters<typeof real.upsert>[0], input: Parameters<typeof real.upsert>[1]) {
+      if (input.externalId === 'b.md') throw new Error('connection lost');
+      return real.upsert(s, input);
+    },
+  };
+
+  const { pending, failures } = await scanMarkdown(
+    port({
+      'a.md': { text: '# Alpha\n\nfirst' },
+      'b.md': { text: '# Bravo\n\nsecond' },
+      'c.md': { text: '# Charlie\n\nthird' },
+    }),
+    '/vault',
+    SRC,
+  );
+
+  let n = 0;
+  const result = await persistIngest(
+    scope,
+    flaky,
+    await runIngest({
+      scope,
+      sourceId: SRC,
+      pending,
+      failures,
+      lookup: storeLookup(scope, real),
+      newId: () => `doc-${++n}` as DocId,
+      newEventId: () => `evt-${n}`,
+      now: '2026-08-02T00:00:00.000Z',
+    }),
+  );
+
+  assert.equal(result.written, 2, 'the other two documents still land');
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0]?.externalId, 'b.md');
+
+  // The event for the failed document must say `failed`, not `imported`. runIngest decided the
+  // status before the write happened, so persistIngest is the only stage that knows better.
+  const failedEvent = result.events.find((e) => e.externalId === 'b.md');
+  assert.equal(failedEvent?.status, 'failed');
+  assert.equal(failedEvent?.error?.code, 'persist-failed');
+  assert.equal(failedEvent?.docId, undefined, 'a failed write must not claim a doc id');
+  assert.ok(
+    !/connection lost/.test(JSON.stringify(result.events)),
+    'the driver error must never reach a stored message',
+  );
+
+  // And every event still names its file, which is what makes a failure actionable at all.
+  for (const e of result.events) assert.ok(e.externalId, `${e.id} names no file`);
+  assert.deepEqual(
+    result.events.filter((e) => e.status !== 'failed').map((e) => e.externalId).sort(),
+    ['a.md', 'c.md'],
+  );
+});

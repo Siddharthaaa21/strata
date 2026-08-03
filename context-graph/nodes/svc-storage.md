@@ -31,6 +31,12 @@ grant per principal. AuthStore implementation: lookupToken is ONE indexed query 
 touchToken rate-limited to once per minute. ReadonlySourceStore and ReadonlyDocStore types exported so MCP server
 can depend only on read operations by type.
 
+New `external_id` column on `import_events` table, populated by `runIngest` on every event. Migration uses
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` because `CREATE TABLE IF NOT EXISTS` is a no-op on an existing
+database — the live database would otherwise never get the column. This pattern generalizes: tests always start
+from empty schema, so a missing migration passes every test and fails only on the database that matters. Lesson:
+verify additive migrations land on the live system, not just test fixtures.
+
 Tested against real Postgres 18 via PGlite (WASM, in-process) — the SQL under test is the SQL that
 ships. Still open: connecting a live server (no Postgres in the dev environment yet) and retiring
 the fixtures the screens currently read from.

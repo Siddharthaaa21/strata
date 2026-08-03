@@ -20,6 +20,10 @@ export const MARKDOWN_ERRORS = {
   'path-invalid': 'The file path is not usable as a stable identifier.',
   'unsupported-type': 'The file extension is not an ingestible Markdown type.',
   'duplicate-identity': 'Another file in this import already claims this identifier.',
+  // Raised by the persist stage, not the parser, but it lives here because this table is the one
+  // place a message shown to a user is guaranteed sanitized — a driver error carries SQL and row
+  // fragments, and ADR 0003 forbids those reaching `ImportEvent.error.message`.
+  'persist-failed': 'The document could not be written to storage.',
 } as const;
 
 export type MarkdownErrorCode = keyof typeof MARKDOWN_ERRORS;
@@ -53,10 +57,17 @@ const NUL = String.fromCharCode(0);
  * normalizer's version would invalidate the whole corpus on every heuristic tweak.
  */
 export function canonicalize(raw: string): string {
-  return raw
-    .replace(/^\uFEFF/, '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/\s*$/, '\n');
+  return (
+    raw
+      .replace(/^\uFEFF/, '')
+      .replace(/\r\n?/g, '\n')
+      // `trimEnd()`, not `.replace(/\s*$/, '')`. The regex form is quadratic: `$` anchors to the end
+      // of input, so the engine restarts `\s*` at every position in a trailing whitespace run and
+      // backtracks to the end each time. Measured 4x per doubling \u2014 25k trailing spaces took 227ms,
+      // 150k took 8.3s, and the 2 MiB file cap extrapolates to roughly 27 minutes of blocked event
+      // loop for one crafted file whose content is just spaces. `trimEnd` is native and linear.
+      .trimEnd() + '\n'
+  );
 }
 
 export function contentHash(raw: string): string {
@@ -200,11 +211,22 @@ export function deriveExcerpt(origin: RawOrigin, body: string): Derived<string> 
     .find((p) => p && !p.startsWith('#') && !p.startsWith('<') && !p.startsWith('|') && !p.startsWith('>'));
 
   const text = (block ?? '')
+    // Bound the input BEFORE the link regex, not after.
+    //
+    // `/\[([^\]]*)\]\([^)]*\)/g` is quadratic on unbalanced brackets: every `[` starts a match
+    // attempt, `[^\]]*` scans to the end of the block, fails to find `]`, and backtracks. A first
+    // paragraph of `'['.repeat(2_000_000)` — legal inside the 2 MiB file cap — measured 14.5s at
+    // 200k and scales 4x per doubling.
+    //
+    // Slicing first is the fix rather than a cleverer regex, because the output is capped at
+    // MAX_EXCERPT anyway: no correct excerpt can depend on text beyond this window. The window is
+    // deliberately much larger than MAX_EXCERPT so that stripping markup cannot starve it.
+    .slice(0, MAX_EXCERPT * 8)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/[*_`]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 280);
+    .slice(0, MAX_EXCERPT);
 
   return { value: text, provenance: 'heuristic', derivedAt: at };
 }

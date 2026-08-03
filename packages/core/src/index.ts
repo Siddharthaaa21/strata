@@ -266,6 +266,22 @@ export interface ImportEvent {
   readonly sourceId: SourceId;
   /** Absent when the import failed before a Doc existed. */
   readonly docId?: DocId;
+  /**
+   * Which file this event is about — the relative path, per ADR 0003's identity rule.
+   *
+   * Added because a failure without it is unactionable. A `frontmatter-invalid` event across a
+   * 3000-file vault said only "something in this source failed", and `docId` is absent precisely in
+   * the failure case, so there was no way to learn *which* file. ADR 0003's stated purpose for
+   * recording failures is that the user can find out why a document did not appear; without this
+   * field that purpose was not served.
+   *
+   * Still optional: an event about a source-level operation legitimately has no single file.
+   *
+   * Untrusted-adjacent — it is a filesystem path from an ingested folder. Safe in the error channel
+   * because it is the identity we already store on `Doc.externalId`, and it is never interpolated
+   * into a tool description or an MCP response.
+   */
+  readonly externalId?: string;
   /** `skipped-duplicate` is a normal outcome — idempotent re-import is the design, not a fault. */
   readonly status: 'imported' | 'updated' | 'skipped-duplicate' | 'failed';
   /** `message` is sanitized. It must never echo raw ingested content back into a log or a UI. */

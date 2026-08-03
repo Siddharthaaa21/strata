@@ -89,6 +89,9 @@ CREATE TABLE IF NOT EXISTS import_events (
   id            text        NOT NULL,
   source_id     text        NOT NULL,
   doc_id        text,
+  -- Which file. doc_id is absent precisely in the failure case, so without this a failed import
+  -- says only "something in this source failed" — see ADR 0003 on why failures must be actionable.
+  external_id   text,
   status        text        NOT NULL,
   error_code    text,
   -- Sanitized by contract: a fixed per-code template, never a caught exception's message and never
@@ -148,6 +151,12 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
   last_used_at timestamptz,
   revoked_at   timestamptz
 );
+
+-- Additive migrations for databases created before a column existed. CREATE TABLE IF NOT EXISTS is
+-- a no-op on an existing table, so a new column needs its own statement or it only ever appears on
+-- freshly created databases — which is exactly the class of bug that passes every test (tests start
+-- empty) and fails on the one database that matters.
+ALTER TABLE import_events ADD COLUMN IF NOT EXISTS external_id text;
 
 CREATE INDEX IF NOT EXISTS docs_fts ON docs USING GIN (search_vector);
 CREATE INDEX IF NOT EXISTS docs_scope ON docs (workspace_id, source_id) INCLUDE (updated_at);

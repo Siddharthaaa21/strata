@@ -25,14 +25,16 @@ export function createEventStore(db: SqlDriver): EventStore {
       for (const e of events) {
         await db.query(
           `INSERT INTO import_events
-             (workspace_id, id, source_id, doc_id, status, error_code, error_message, occurred_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             (workspace_id, id, source_id, doc_id, external_id, status, error_code, error_message,
+              occurred_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
            ON CONFLICT (workspace_id, id) DO NOTHING`,
           [
             workspaceId,
             e.id,
             e.sourceId,
             e.docId ?? null,
+            e.externalId ?? null,
             e.status,
             e.error?.code ?? null,
             e.error?.message ?? null,
@@ -49,6 +51,7 @@ export function createEventStore(db: SqlDriver): EventStore {
         id: string;
         source_id: string;
         doc_id: string | null;
+        external_id: string | null;
         status: string;
         error_code: string | null;
         error_message: string | null;
@@ -57,7 +60,7 @@ export function createEventStore(db: SqlDriver): EventStore {
         // The grant filter is a WHERE clause, never a post-filter — same rule as every other read.
         // Without it a narrowed principal saw sourceId and docId for every source in the workspace,
         // which is a full enumeration of the vault it was explicitly narrowed away from.
-        `SELECT id, source_id, doc_id, status, error_code, error_message, occurred_at
+        `SELECT id, source_id, doc_id, external_id, status, error_code, error_message, occurred_at
            FROM import_events
           WHERE workspace_id = $1
             AND ($2::text[] IS NULL OR source_id = ANY($2::text[]))
@@ -75,6 +78,7 @@ export function createEventStore(db: SqlDriver): EventStore {
         workspaceId: workspaceId as WorkspaceId,
         sourceId: r.source_id as SourceId,
         ...(r.doc_id == null ? {} : { docId: r.doc_id as DocId }),
+        ...(r.external_id == null ? {} : { externalId: r.external_id }),
         status: r.status as ImportEvent['status'],
         ...(r.error_code == null
           ? {}

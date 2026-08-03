@@ -30,6 +30,16 @@ type Inline = React.ReactNode;
  * attacker-controlled, and a live link is a navigation primitive we have not decided to grant.
  */
 function inline(text: string, keyPrefix: string): Inline[] {
+  // Above this, render as plain text and skip inline parsing entirely.
+  //
+  // The link alternative below (`\[[^\]\n]*\]\([^)\n]*\)`) is quadratic on unbalanced brackets, the
+  // same shape as the ingest-side stripper: every `[` starts an attempt that scans to the end and
+  // backtracks. Document bodies are untrusted and bounded only by the 2 MiB ingest cap, and unlike
+  // the ingest path this code runs in the reader's browser — a hang here freezes the user's tab,
+  // not a CLI. No real prose paragraph approaches this length, so degrading to plain text costs
+  // nothing a reader would notice and removes the ceiling entirely.
+  if (text.length > 20_000) return [text];
+
   const out: Inline[] = [];
   const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]*\]\([^)\n]*\))/g;
 

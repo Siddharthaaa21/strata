@@ -28,6 +28,7 @@ import {
   MAX_TAG,
   deriveTitle,
   deriveFolder,
+  deriveExcerpt,
 } from './markdown.ts';
 import { runIngest, type KnownDoc } from './pipeline.ts';
 
@@ -316,6 +317,58 @@ test('two files colliding on one externalId fail loudly instead of overwriting e
   const failed = events.filter((e) => e.status === 'failed');
   assert.equal(failed.length, 1);
   assert.equal(failed[0]?.error?.code, 'duplicate-identity');
+});
+
+// --- ReDoS: inputs that used to make ingest hang -----------------------------------------------
+
+test('a file of trailing whitespace canonicalizes in linear time', () => {
+  // The old `.replace(/\s*$/, '\n')` was quadratic: 25k spaces took 227ms, 150k took 8.3s, and the
+  // 2 MiB file cap extrapolated to ~27 minutes of blocked event loop for one crafted file. A
+  // wall-clock bound is a blunt assertion, but it is the only thing that distinguishes linear from
+  // quadratic, and the margin is three orders of magnitude — this cannot flake into passing.
+  const hostile = ' '.repeat(2_000_000) + 'x';
+  const started = process.hrtime.bigint();
+  const out = canonicalize(hostile);
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+
+  assert.equal(out, hostile + '\n', 'leading whitespace is content and is preserved');
+  assert.ok(ms < 1000, `canonicalize took ${ms.toFixed(0)}ms on 2 MiB of trailing space`);
+});
+
+test('canonicalize still collapses trailing whitespace exactly as before', () => {
+  // The behaviour identity depends on. Changing the implementation must not change the hash, or
+  // every document in every vault re-imports as "updated".
+  assert.equal(canonicalize('a\nb\n\n\n   \n'), 'a\nb\n');
+  assert.equal(canonicalize('x'), 'x\n');
+  assert.equal(canonicalize(''), '\n');
+  assert.equal(contentHash('a\r\nb\r\n'), contentHash('a\nb\n'));
+});
+
+test('a paragraph of unbalanced brackets does not hang excerpt derivation', () => {
+  // `/\[([^\]]*)\]\([^)]*\)/g` backtracks from every `[`. 200k brackets measured 14.5s before the
+  // input was bounded ahead of the regex.
+  const origin = {
+    path: 'a.md',
+    modifiedAt: '2026-08-02T00:00:00.000Z',
+    createdAt: '2026-08-01T00:00:00.000Z',
+  };
+  const started = process.hrtime.bigint();
+  const excerpt = deriveExcerpt(origin, '['.repeat(2_000_000));
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+
+  assert.ok(excerpt.value.length <= MAX_EXCERPT);
+  assert.ok(ms < 1000, `deriveExcerpt took ${ms.toFixed(0)}ms on 2 MiB of '['`);
+});
+
+test('bounding the excerpt window does not truncate an ordinary link', () => {
+  // The bound must change output only for pathological input, never for a real document.
+  const origin = {
+    path: 'a.md',
+    modifiedAt: '2026-08-02T00:00:00.000Z',
+    createdAt: '2026-08-01T00:00:00.000Z',
+  };
+  const excerpt = deriveExcerpt(origin, 'See [the tenancy ADR](docs/adr/0002.md) for the reasoning.');
+  assert.equal(excerpt.value, 'See the tenancy ADR for the reasoning.');
 });
 
 test('the same file enumerated twice is still a quiet duplicate, not a failure', async () => {
