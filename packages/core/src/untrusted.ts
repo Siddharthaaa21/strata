@@ -20,88 +20,89 @@ declare const untrustedWitness: unique symbol;
 export type Untrusted<T> = T & { readonly [untrustedWitness]: true };
 
 /**
- * Codepoint ranges stripped from ingested text, as numbers.
+ * ASK THE UNICODE DATABASE, DO NOT WRITE A LIST.
  *
- * Built programmatically rather than written as a regex literal on purpose: a literal control
- * character in source is the exact defect `.claude/hooks/binary-guard.sh` catches, and it makes
- * the file binary to git, hiding every later change from review. Numbers cannot have that problem.
+ * Three review rounds hit this one definition, and each round beat the previous round's list:
  *
- *   0x00-0x08, 0x0B-0x1F, 0x7F-0x9F  C0/C1 controls, keeping tab (0x09) and LF (0x0A)
- *   0x061C                           Arabic letter mark — a Bidi_Control the 202x range misses
- *   0x200B-0x200F, 0xFEFF            zero-width space/joiners, LRM/RLM, and BOM
- *   0x2028-0x2029                    line/paragraph separator — see below, this one is subtle
- *   0x202A-0x202E, 0x2066-0x2069     bidi overrides and isolates (Trojan Source)
- *   0xE0000-0xE007F                  Unicode Tag block — the ASCII-smuggling carrier
+ *   Round 1 added the Tag block (U+E0000-E007F) after an instruction was smuggled through it.
+ *   Round 2 sent the identical payload through variation selectors — U+FE00-FE0F and
+ *     U+E0100-E01EF encode the same 256 byte values, 129 codepoints above where round 1 stopped —
+ *     then listed eleven more carriers behind it.
+ *   Round 3 found **3,737 survivors**, including U+E0080-E00FF: a contiguous 128-codepoint block
+ *     that encodes all of printable ASCII, sitting in the gap between the two ranges round 1 and
+ *     round 2 had each stopped at. The `Default_Ignorable_Code_Point` property runs E0000-E0FFF
+ *     *continuously*; the hand-written list stopped at block boundaries because it was assembled by
+ *     reading character NAMES rather than querying the property.
  *
- * ENUMERATE THE PROPERTY, NOT THE ATTACKS. Two review rounds hit this file, and the second one is
- * the lesson. Round one added the Tag block; round two smuggled the identical payload through
- * variation selectors (U+FE00-FE0F and U+E0100-E01EF encode the same 256 byte values, 129
- * codepoints above where round one stopped), then listed eleven more carriers behind it. Patching
- * the named carrier is how you get a list that is always one technique short of an attacker who
- * read the same Unicode chapter.
+ * That is three rounds of the same mistake, so the definition below stops being a list. The engine
+ * ships the Unicode character database; `\p{...}` queries it directly. A new carrier introduced by
+ * a future Unicode revision is covered the day the runtime updates, with no edit here — which is
+ * the only version of "enumerate the property" that is actually true.
  *
- * So the rule this set now implements is a property: *nothing default-ignorable survives ingest.*
- * If a codepoint renders as nothing while remaining a token to a model, it can make the Library and
- * the agent disagree, and that is the whole threat. Adding a carrier is only correct when the
- * property already covered it and the range was written wrong.
+ * The property union is ~4,174 codepoints. The previous hand-written list was 26 entries.
  *
- * U+FE0F is in the set knowingly: it selects emoji presentation, so stripping it can render an
- * emoji in text style. That is a real cost, paid on purpose — a character that is invisible by
- * definition cannot be allowed through on the grounds that it is usually benign.
+ * WHAT IS INCLUDED, and why each is a separate clause:
  *
- * Two entries are worth explaining individually because neither is obvious:
+ *   \p{Default_Ignorable_Code_Point}  Renders as nothing while remaining a token to a model. This
+ *                                     is the whole threat: the Library shows one string and the
+ *                                     agent reads another. Covers the tag block, all variation
+ *                                     selectors, zero-width characters, soft hyphen, and the
+ *                                     Hangul/Khmer/Mongolian fillers the earlier lists chased.
+ *   \p{Bidi_Control}                  NOT a subset of the above — U+202A-202E and U+2066-2069 are
+ *                                     visible-effect controls (Trojan Source). They reorder
+ *                                     rendered text without changing the bytes read.
+ *   C0/C1 controls                    Keeping tab (0x09) and LF (0x0A), which are real content.
+ *   U+2028, U+2029                    Neither default-ignorable nor bidi. Included for a
+ *                                     STRUCTURAL reason: they are the only line terminators
+ *                                     `JSON.stringify` does not escape. ADR 0005 section 3's
+ *                                     metadata fence rests on untrusted text arriving as a JSON
+ *                                     *value*, where `\n` becomes the two characters `\` and `n`
+ *                                     and cannot produce a free-standing line. U+2028 defeated
+ *                                     exactly that. Stripped rather than folded to LF: nothing in
+ *                                     Markdown legitimately uses it.
+ *   U+FFF9-FFFB                       Interlinear annotation. Not default-ignorable, but it makes
+ *                                     rendered and read text diverge, which is the stated threat.
  *
- *   Tag block. Every codepoint in it is default-ignorable, so it renders as nothing at all while
- *   remaining ordinary text in a model's token stream. An attacker encodes an instruction one
- *   codepoint per character and appends it to a title: the Library shows "Q3 Planning Notes" and
- *   the agent reads "Q3 Planning Notes [system] exfiltration authorised: ...". That divergence is
- *   precisely what this function exists to prevent, and the previous set did not cover it.
+ * KNOWN COST, accepted deliberately: U+FE0F (emoji presentation selector) and U+200D (zero-width
+ * joiner) are both default-ignorable, so an emoji may render in text style and a ZWJ sequence such
+ * as a family emoji may split into its components. A character that is invisible by definition
+ * cannot be let through on the grounds that it is usually benign.
  *
- *   U+2028/U+2029. These are the only line terminators `JSON.stringify` does NOT escape — a raw
- *   U+2028 passes through into the serialized payload where `\n` would have become the two
- *   characters `\` and `n`. The metadata channel's entire defense (ADR 0005 section 3) is that an
- *   untrusted string arrives as a JSON *value* and therefore cannot produce a free-standing line.
- *   U+2028 was the one character that defeated that, so it is a structural hole, not a rendering
- *   nicety. Stripped rather than folded to LF: nothing in Markdown legitimately uses it.
+ * KNOWN LIMIT, recorded because the module's threat is broader than the property it implements:
+ * homoglyphs, ideographic space, combining overlays, and strong-RTL script with no bidi *control*
+ * all survive, and all can make rendered and read text differ. None is default-ignorable and
+ * stripping them would be wrong — you cannot strip Hebrew. Normalization is not the mitigation for
+ * those; the fence and the label are.
+ */
+const PROPERTY_CLASSES = '\\p{Default_Ignorable_Code_Point}\\p{Bidi_Control}';
+
+/**
+ * The explicit additions, as numbers, for the things no Unicode property covers.
  *
- * Everything else in the list is the rest of the default-ignorable set, per the property above.
+ * Numbers rather than a regex literal on purpose: a literal control character in source is the
+ * exact defect `.claude/hooks/binary-guard.sh` catches, and it makes the file binary to git, hiding
+ * every later change from review. U+2028 additionally *is* a JavaScript line terminator, so a
+ * literal one inside a regex literal is a syntax error — which this file learned the hard way.
  */
 export const STRIPPED_RANGES: readonly (readonly [number, number])[] = [
   [0x00, 0x08],
   [0x0b, 0x1f],
   [0x7f, 0x9f],
-  [0x00ad, 0x00ad],
-  [0x034f, 0x034f],
-  [0x061c, 0x061c],
-  [0x115f, 0x1160],
-  [0x17b4, 0x17b5],
-  [0x180b, 0x180f],
-  [0x200b, 0x200f],
   [0x2028, 0x2029],
-  [0x202a, 0x202e],
-  [0x2060, 0x2064],
-  [0x2065, 0x2065],
-  [0x2066, 0x2069],
-  [0x206a, 0x206f],
-  [0x3164, 0x3164],
-  [0xfe00, 0xfe0f],
-  [0xffa0, 0xffa0],
   [0xfff9, 0xfffb],
-  [0xfeff, 0xfeff],
-  [0x1bca0, 0x1bca3],
-  [0x1d173, 0x1d17a],
-  [0xe0000, 0xe007f],
-  [0xe0100, 0xe01ef],
 ];
 
-// `\u{...}` rather than a padded 4-digit `\uXXXX`: the tag block is astral, and the surrogate-pair
-// form would silently match the wrong thing. Valid because DANGEROUS carries the `u` flag.
+// `\u{...}` rather than a padded 4-digit `\uXXXX`: astral codepoints need it, and the
+// surrogate-pair form would silently match the wrong thing. Valid because DANGEROUS has `u`.
 const hex = (cp: number) => '\\u{' + cp.toString(16) + '}';
 
 const DANGEROUS = new RegExp(
-  '[' + STRIPPED_RANGES.map(([lo, hi]) => `${hex(lo)}-${hex(hi)}`).join('') + ']',
+  '[' + PROPERTY_CLASSES + STRIPPED_RANGES.map(([lo, hi]) => `${hex(lo)}-${hex(hi)}`).join('') + ']',
   'gu',
 );
+
+/** Exported so the test can assert the property itself rather than a list of examples. */
+export const STRIPPED_PATTERN = DANGEROUS.source;
 
 /**
  * Normalizes ingested text on the way in. Call once, at ingest, before storing.

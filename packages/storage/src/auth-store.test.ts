@@ -113,15 +113,41 @@ test('revoking the principal kills every token it owns', async () => {
   assert.equal(kind, 'revoked');
 });
 
-test('revoking the grant is caught by mintScope, not by the query', async () => {
+test('revoking the grant fails as `revoked`, not as an internal error', async () => {
   // Belt and braces on purpose: the lookup returns revoked grants and mintScope refuses them, so the
   // invariant lives in the one function permitted to create authority rather than in a WHERE clause
   // somebody could later "simplify".
+  //
+  // But mintScope throws a BARE Error, which used to fall through the MCP server's catch to
+  // `InternalError` — so the third revocation lever behaved differently from the other two. That
+  // both leaked a distinction ("every failure collapses to one word" was false) and showed an
+  // operator who had just revoked a grant the message the server emits for bugs.
   const { db, store, auth } = await fresh();
   const { presented } = await store.createAgent(agent());
 
   await db.query('UPDATE grants SET revoked_at = now()');
-  await assert.rejects(() => auth.scopeFromAgentToken(presented), /Grant revoked/);
+  const kind = await auth.scopeFromAgentToken(presented).then(() => null, (e: AuthError) => e.kind);
+  assert.equal(kind, 'revoked');
+});
+
+test('all three revocation levers are indistinguishable to the caller', async () => {
+  // Token, principal, and grant. The wire message must be identical for all three; only our own
+  // logs get to know which one fired.
+  const levers = [
+    'UPDATE agent_tokens SET revoked_at = now()',
+    'UPDATE principals SET revoked_at = now()',
+    'UPDATE grants SET revoked_at = now()',
+  ];
+
+  for (const sql of levers) {
+    const { db, store, auth } = await fresh();
+    const { presented } = await store.createAgent(agent());
+    await db.query(sql);
+
+    const err = await auth.scopeFromAgentToken(presented).then(() => null, (e: unknown) => e);
+    assert.ok(err instanceof AuthError, `${sql} produced ${(err as Error)?.name}, not an AuthError`);
+    assert.equal((err as AuthError).kind, 'revoked');
+  }
 });
 
 test('an expired token is rejected, and the clock is injected', async () => {

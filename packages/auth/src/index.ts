@@ -74,10 +74,22 @@ export function createAuthenticator(store: AuthStore, now: () => Date = () => ne
       // mintScope re-checks the grant's own revocation and that it matches the principal. Kept even
       // though the query could filter it: it is the invariant's home, and belt-and-braces on the one
       // function permitted to create authority is cheap.
-      const scope = mintScope(
-        { id: row.principalId, kind: row.kind, workspaceId: row.workspaceId },
-        row.grant,
-      );
+      //
+      // It throws a bare Error, which is neither AuthError nor ToolError, so it used to fall
+      // through the MCP server's catch to `InternalError`. Two problems with that, and the second
+      // is the real one: revoking a GRANT was distinguishable from revoking a token or a principal,
+      // contradicting "every authentication failure collapses to one word"; and an operator who had
+      // just deliberately revoked a grant saw the message the server emits for *bugs*. Translated
+      // here rather than in the server, because this is the layer that knows what the throw means.
+      let scope: Scope;
+      try {
+        scope = mintScope(
+          { id: row.principalId, kind: row.kind, workspaceId: row.workspaceId },
+          row.grant,
+        );
+      } catch {
+        throw new AuthError('revoked');
+      }
 
       // Fire and forget. A failure to record usage must never fail the request it is recording.
       void store.touchToken(parsed.tokenId, now().toISOString()).catch(() => {});
