@@ -32,6 +32,12 @@ export interface AuthLookup {
   readonly expiresAt?: string;
 }
 
+export interface NewMember {
+  readonly workspaceId: WorkspaceId;
+  readonly email: string;
+  readonly invitedBy?: PrincipalId;
+}
+
 export interface NewAgent {
   readonly workspaceId: WorkspaceId;
   readonly displayName: string;
@@ -42,9 +48,37 @@ export interface NewAgent {
   readonly createdBy?: PrincipalId;
 }
 
+/**
+ * What a verified identity-provider session tells us.
+ *
+ * Deliberately three fields. Everything else a provider returns — display name, avatar, its own
+ * roles and org memberships — is either presentation or an authorization model we refuse to adopt
+ * (ADR 0006 §5, rule 2). `subject` is the provider's stable id and is never used as a `PrincipalId`.
+ *
+ * This type is provider-agnostic on purpose: swapping Supabase Auth for anything else changes the
+ * code that PRODUCES these three values and nothing downstream of it.
+ */
+export interface SessionClaims {
+  readonly provider: string;
+  readonly subject: string;
+  /** Lower-cased by the store. Providers disagree on case, and an allowlist that misses on
+   *  capitalisation locks out exactly the person it was written for. */
+  readonly email: string;
+}
+
 export interface AuthStore {
   /** One indexed lookup on the token's public id. Returns undefined for an unknown id. */
   lookupToken(tokenId: string): Promise<AuthLookup | undefined>;
+
+  /**
+   * Resolves a verified session to a principal, or `undefined` if the address is not a member.
+   *
+   * Creates the principal, its grant, and the identity link on FIRST sign-in — but only for an
+   * address already on the allowlist. A provider will happily authenticate anyone with a Google
+   * account; membership is what decides whether that person gets a workspace, and it is ours to
+   * decide, not the provider's.
+   */
+  resolveSession(claims: SessionClaims): Promise<AuthLookup | undefined>;
 
   /**
    * Creates a principal, its single active grant, and its first token, atomically.
@@ -58,4 +92,27 @@ export interface AuthStore {
    * write per call, for a field a UI renders as "2 hours ago", is not worth the amplification.
    */
   touchToken(tokenId: string, at: string): Promise<void>;
+
+  /** Adds an address to the allowlist. Idempotent — re-inviting an existing member is a no-op. */
+  addMember(input: NewMember): Promise<void>;
+
+  /**
+   * Ends a membership.
+   *
+   * Revokes the person's principal and every token it owns in the same statement, because a
+   * membership that is revoked while its agent tokens keep working is not revoked. Never deletes:
+   * the access log has to stay attributable.
+   */
+  removeMember(workspaceId: WorkspaceId, email: string): Promise<void>;
+
+  /** For the operator CLI. Never exposed over MCP — it is a list of people, not of documents. */
+  listMembers(workspaceId: WorkspaceId): Promise<
+    readonly {
+      readonly email: string;
+      readonly principalId?: PrincipalId;
+      readonly invitedAt: string;
+      readonly joinedAt?: string;
+      readonly revokedAt?: string;
+    }[]
+  >;
 }

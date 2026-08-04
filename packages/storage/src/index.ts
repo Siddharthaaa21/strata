@@ -135,6 +135,41 @@ CREATE TABLE IF NOT EXISTS grants (
 CREATE UNIQUE INDEX IF NOT EXISTS grants_one_active
   ON grants (workspace_id, principal_id) WHERE revoked_at IS NULL;
 
+-- Who may sign in to a workspace, keyed on EMAIL rather than on a principal.
+--
+-- The allowlist IS the membership row: an address is added before its owner has ever signed in, and
+-- principal_id is filled on first successful sign-in. That is deliberately simpler than invite
+-- tokens — no token to expire, no accept flow, no pending state that can be abandoned — and it
+-- fails in the safe direction: an address nobody added cannot sign in at all, so a stray OAuth
+-- login never creates an orphan account with a workspace attached.
+--
+-- Email is stored lower-cased. Providers vary on case and an allowlist that misses on capitalisation
+-- is an allowlist that locks out the person it was written for.
+CREATE TABLE IF NOT EXISTS memberships (
+  workspace_id text        NOT NULL,
+  email        text        NOT NULL,
+  principal_id text,                              -- null until first sign-in
+  invited_by   text,
+  invited_at   timestamptz NOT NULL,
+  joined_at    timestamptz,
+  revoked_at   timestamptz,
+  PRIMARY KEY (workspace_id, email)
+);
+
+-- The identity provider's subject id, kept OUT of PrincipalId (ADR 0006 section 5, rule 1).
+--
+-- Swapping providers rewrites this one table. Using their sub as our principal id would instead
+-- rewrite created_by, every grants.principal_id, and every access-log row — which is how an
+-- identity provider stops being swappable at any price.
+CREATE TABLE IF NOT EXISTS user_identities (
+  provider     text NOT NULL,
+  subject      text NOT NULL,
+  workspace_id text NOT NULL,
+  principal_id text NOT NULL,
+  linked_at    timestamptz NOT NULL,
+  PRIMARY KEY (provider, subject)
+);
+
 -- Referenceable target for the composite foreign key below. Redundant with the primary key on its
 -- own, and that is the point: it lets a child row require that a grant belongs to a named principal.
 ALTER TABLE grants DROP CONSTRAINT IF EXISTS grants_principal_identity;

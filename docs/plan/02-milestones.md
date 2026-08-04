@@ -243,9 +243,16 @@ need it.
 - [ ] CLI scripts (`ingest`, `search`) still use `localDevScope`; they move to `STRATA_CLI_TOKEN`
       with increment 2, when that function is deleted.
 
-**Increment 2 — human sessions**
+**Increment 2 — human sessions** `in progress`
 
-- [ ] Supabase Auth; `user_identities`; `scopeFromSession`; `vault()` becomes async
+Audience decided 2026-08-04: a few teammates, one shared workspace (ADR 0006 section 6b).
+
+- [x] `memberships` and `user_identities` tables; email allowlist as the invite
+- [x] `scopeFromSession` gated on membership — an authenticated stranger is still a stranger
+- [x] `removeMember` revokes the person, the agents they created, and those agents tokens
+- [x] `npm run member -- <list|add|remove>` for operating the allowlist without SQL
+- [ ] Supabase Auth provider integration — the only piece needing credentials
+- [ ] `vault()` becomes async and reads the session
 - [ ] `localDevScope` deleted — dev uses a real credential through the real path, never a second one
 
 **Increment 3 — the screen**

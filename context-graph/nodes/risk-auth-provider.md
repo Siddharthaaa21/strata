@@ -25,4 +25,6 @@ but NOT confidentiality—anyone who can launch the server can read `.env` and r
 HTTP transport arrives, token confidentiality is protected by TLS + rate limiting, but the signature of `scopeFromAgentToken`
 does not change.
 
-**Increments 2-3 open:** human sessions with Supabase Auth, Agent Access screen + access log.
+**Increment 2 — BLOCKING:** Membership, sessions, and identity mapping shipped (memberships table, user_identities table, SessionClaims, resolveSession, addMember/removeMember/listMembers, CLI operator tools). Provider integration (Supabase Auth) and `vault()` async on ServerDeps are the ONLY remaining work for increment 2. Provider choice is now the sole blocker.
+
+**Increment 3 open:** Agent Access screen + access log.

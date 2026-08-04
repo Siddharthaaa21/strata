@@ -16,7 +16,8 @@ and `Visible<T>`.
 
 `Scope`/`Visible<T>` are brands, not runtime-checked witnesses — a bare cast compiles. The actual
 enforcement is a `no-restricted-syntax` ESLint rule (`eslint.config.mjs`) restricting construction
-to `index.ts` and `scope-internal.ts`, checked on every `npm run verify`. Scope is minted from a
-verified agent token via `scopeFromAgentToken`; no caching and no verification cache, so every call
-verifies freshly (the token may be revoked mid-request). Anything that reads a store or builds an
-MCP payload depends on this node, not just on `contract-doc`.
+to `index.ts` and `scope-internal.ts`, checked on every `npm run verify`. Scope is minted from verified
+credentials via `scopeFromAgentToken` (agent token) or `scopeFromSession` (human session); no caching
+and no verification cache, so every call verifies freshly (the token may be revoked, the person may be
+removed from membership, mid-request). Anything that reads a store or builds an MCP payload depends on
+this node, not just on `contract-doc`.

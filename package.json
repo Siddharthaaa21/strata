@@ -23,7 +23,8 @@
     "ingest": "node scripts/ingest.mjs",
     "search": "node scripts/search.mjs",
     "mcp:smoke": "node scripts/mcp-smoke.mjs",
-    "agent:create": "node scripts/agent-create.mjs"
+    "agent:create": "node scripts/agent-create.mjs",
+    "member": "node scripts/member.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
