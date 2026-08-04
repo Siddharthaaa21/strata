@@ -13,13 +13,13 @@
 import { mintScope } from '@strata/core/scope-internal';
 import type { GrantId, PrincipalId, Scope, SourceId, WorkspaceId } from '@strata/core';
 import { parseAgentToken, secretMatches } from './tokens.ts';
-import type { AuthStore } from './store.ts';
+import type { AuthStore, SessionClaims } from './store.ts';
 
 export * from './tokens.ts';
 export * from './store.ts';
 
 /** Why a credential was rejected. For OUR logs — never for the wire. */
-export type AuthFailureKind = 'malformed' | 'unknown' | 'revoked' | 'expired';
+export type AuthFailureKind = 'malformed' | 'unknown' | 'revoked' | 'expired' | 'no-membership';
 
 /**
  * Every rejection is this one class, and the caller collapses all of them to a single wire message.
@@ -41,6 +41,8 @@ export class AuthError extends Error {
 export interface Authenticator {
   /** Verifies a presented agent token and mints a request `Scope`. */
   scopeFromAgentToken(presented: string): Promise<Scope>;
+  /** Turns a verified provider session into a request `Scope`, gated on workspace membership. */
+  scopeFromSession(claims: SessionClaims): Promise<Scope>;
 }
 
 /**
@@ -94,6 +96,45 @@ export function createAuthenticator(store: AuthStore, now: () => Date = () => ne
       // Fire and forget. A failure to record usage must never fail the request it is recording.
       void store.touchToken(parsed.tokenId, now().toISOString()).catch(() => {});
       return scope;
+    },
+
+    /**
+     * The web app's path. The provider says who someone is; MEMBERSHIP says whether they get a
+     * workspace, and that decision stays here rather than in the provider's console (ADR 0006 §5).
+     *
+     * The caller must have verified the session already — this takes claims, not a cookie or a JWT,
+     * so signature checking lives with the provider integration and this function stays
+     * provider-agnostic and testable without one.
+     */
+    async scopeFromSession(claims) {
+      if (
+        typeof claims?.email !== 'string' ||
+        typeof claims.subject !== 'string' ||
+        typeof claims.provider !== 'string' ||
+        claims.email.trim() === '' ||
+        claims.subject === ''
+      ) {
+        throw new AuthError('malformed');
+      }
+
+      // An authenticated stranger is still a stranger. A provider will happily sign in anyone with
+      // a Google account; not being on the allowlist is the common case, not an error condition.
+      const row = await store.resolveSession({
+        provider: claims.provider,
+        subject: claims.subject,
+        email: claims.email.trim().toLowerCase(),
+      });
+      if (row === undefined) throw new AuthError('no-membership');
+      if (row.principalRevokedAt !== undefined) throw new AuthError('revoked');
+
+      try {
+        return mintScope(
+          { id: row.principalId, kind: row.kind, workspaceId: row.workspaceId },
+          row.grant,
+        );
+      } catch {
+        throw new AuthError('revoked');
+      }
     },
   };
 }

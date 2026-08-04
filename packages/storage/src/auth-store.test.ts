@@ -302,3 +302,158 @@ test('an unrepresentable expiry fails closed as Unauthorized, not InternalError'
   const kind = await auth.scopeFromAgentToken(presented).then(() => null, (e: AuthError) => e.kind);
   assert.equal(kind, 'expired');
 });
+
+// --- membership: the gate that makes "a few teammates" safe -----------------------------------
+
+const claims = (email: string, subject = 'sub-1', provider = 'supabase') => ({
+  provider,
+  subject,
+  email,
+});
+
+test('an authenticated stranger is still a stranger', async () => {
+  // The provider will happily sign in anyone with a Google account. Membership decides whether that
+  // person gets a workspace, and that decision is ours, not the provider's.
+  const { auth } = await fresh();
+  const kind = await auth
+    .scopeFromSession(claims('nobody@example.com'))
+    .then(() => null, (e: AuthError) => e.kind);
+  assert.equal(kind, 'no-membership');
+});
+
+test('an allowlisted address gets a principal on first sign-in, and the same one after', async () => {
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+
+  const first = await auth.scopeFromSession(claims('priya@example.com'));
+  assert.equal(first.workspaceId, WS);
+  assert.equal(first.principal.kind, 'user');
+  assert.equal(scopeFilter(first).sourceIds, undefined, 'a member reaches the whole workspace');
+
+  const second = await auth.scopeFromSession(claims('priya@example.com'));
+  assert.equal(second.principal.id, first.principal.id, 'a second sign-in must not mint a second account');
+});
+
+test('the provider subject is never the PrincipalId', async () => {
+  // ADR 0006 §5 rule 1. Using the provider's id directly would make a provider change rewrite every
+  // foreign key and every access-log row instead of one table.
+  const { db, store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  const scope = await auth.scopeFromSession(claims('priya@example.com', 'google-oauth2|1234567890'));
+
+  assert.notEqual(scope.principal.id, 'google-oauth2|1234567890');
+  const { rows } = await db.query<{ principal_id: string; subject: string }>(
+    'SELECT principal_id, subject FROM user_identities',
+  );
+  assert.equal(rows[0]?.subject, 'google-oauth2|1234567890', 'the subject is recorded');
+  assert.equal(rows[0]?.principal_id, scope.principal.id, 'and linked, not used as the id');
+});
+
+test('email matching ignores case and surrounding whitespace', async () => {
+  // An allowlist that misses on capitalisation locks out exactly the person it was written for.
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: '  Priya@Example.COM ' });
+
+  const scope = await auth.scopeFromSession(claims('priya@example.com'));
+  assert.equal(scope.workspaceId, WS);
+});
+
+test('removing a member kills their agent tokens in the same breath', async () => {
+  // A membership revoked while its tokens keep working is not revoked — the person stops using the
+  // web app and keeps their MCP access, which is the worse half.
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  await auth.scopeFromSession(claims('priya@example.com'));
+
+  // That member creates an agent, as any member may (Membership is flat by ADR 0002).
+  const member = await auth.scopeFromSession(claims('priya@example.com'));
+  const { presented } = await store.createAgent(
+    agent({ displayName: "Priya's laptop", createdBy: member.principal.id }),
+  );
+  assert.ok(await auth.scopeFromAgentToken(presented), 'the agent works while they are a member');
+
+  await store.removeMember(WS, 'PRIYA@example.com');
+
+  const session = await auth
+    .scopeFromSession(claims('priya@example.com'))
+    .then(() => null, (e: AuthError) => e.kind);
+  assert.equal(session, 'no-membership', 'the person can no longer sign in');
+
+  // The half that actually matters, and that the earlier version of this test did NOT check despite
+  // its name: a departing teammate must not keep an MCP token that reads the whole vault.
+  const token = await auth
+    .scopeFromAgentToken(presented)
+    .then(() => 'STILL WORKS', (e: AuthError) => e.kind);
+  assert.equal(token, 'revoked', 'their agents die with them');
+});
+
+test('two members share one workspace and get separate principals', async () => {
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'a@example.com' });
+  await store.addMember({ workspaceId: WS, email: 'b@example.com' });
+
+  const a = await auth.scopeFromSession(claims('a@example.com', 'sub-a'));
+  const b = await auth.scopeFromSession(claims('b@example.com', 'sub-b'));
+
+  assert.notEqual(a.principal.id, b.principal.id);
+  assert.equal(a.workspaceId, b.workspaceId, 'one shared workspace — no switcher needed');
+});
+
+test('re-inviting a removed member restores access', async () => {
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  const before = await auth.scopeFromSession(claims('priya@example.com'));
+  await store.removeMember(WS, 'priya@example.com');
+
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+
+  // Remove-then-re-add must round trip. Restoring the membership row alone left the principal
+  // revoked, so a returning member hit Unauthorized while the operator saw them listed as a member
+  // — an asymmetry that is invisible from both sides.
+  const restored = await auth.scopeFromSession(claims('priya@example.com'));
+  assert.equal(restored.workspaceId, WS);
+  assert.equal(restored.principal.id, before.principal.id, 'and it is the same account, not a new one');
+});
+
+test('re-inviting does NOT reanimate revoked agent tokens', async () => {
+  // Deliberate asymmetry, and the opposite one to the bug above: a credential that was revoked
+  // should need a deliberate re-issue. Silently bringing one back because someone was re-invited is
+  // the opposite of what revocation means.
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  const member = await auth.scopeFromSession(claims('priya@example.com'));
+  const { presented } = await store.createAgent(agent({ createdBy: member.principal.id }));
+
+  await store.removeMember(WS, 'priya@example.com');
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+
+  assert.ok(await auth.scopeFromSession(claims('priya@example.com')), 'the person is back');
+  const tokenKind = await auth
+    .scopeFromAgentToken(presented)
+    .then(() => null, (e: AuthError) => e.kind);
+  assert.equal(tokenKind, 'revoked', 'their old agent token is not silently reanimated');
+});
+
+test('listMembers shows the allowlist including who has not signed in yet', async () => {
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'joined@example.com' });
+  await store.addMember({ workspaceId: WS, email: 'pending@example.com' });
+  await auth.scopeFromSession(claims('joined@example.com'));
+
+  const members = await store.listMembers(WS);
+  assert.equal(members.length, 2);
+  assert.ok(members.find((m) => m.email === 'joined@example.com')?.joinedAt);
+  assert.equal(members.find((m) => m.email === 'pending@example.com')?.joinedAt, undefined);
+});
+
+test('malformed claims are rejected without a database round trip', async () => {
+  const { auth } = await fresh();
+  for (const bad of [
+    { provider: 'supabase', subject: 's', email: '' },
+    { provider: 'supabase', subject: '', email: 'a@b.c' },
+    {} as never,
+  ]) {
+    const kind = await auth.scopeFromSession(bad as never).then(() => null, (e: AuthError) => e.kind);
+    assert.equal(kind, 'malformed');
+  }
+});

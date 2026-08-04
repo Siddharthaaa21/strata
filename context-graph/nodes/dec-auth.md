@@ -29,8 +29,9 @@ server cannot upsert by type.
 
 **Increment 1.75 (M7R4 — HIGH, privilege escalation):** `lookupToken` returned a `Grant` with the TOKEN row's `principal_id` instead of the GRANT row's, so the principal/grant check in `mintScope` compared a value with itself and could never fail. An `agent_tokens` row re-pointed at another principal's grant would silently inherit that grant's scope — a narrowed agent widened to the entire workspace by editing one column. Fixed two ways: (1) query now selects `g.principal_id` so `mintScope` performs a live check, and (2) composite FK `agent_tokens (workspace_id, grant_id, principal_id) REFERENCES grants (workspace_id, id, principal_id)` plus unique constraint prevents the bad write in the first place. The FK is load-bearing because the operator workflow revokes by deleting the grant then inserting a new one, leaving grant_id briefly dangling; the FK ensures the insert re-validates the (grant_id, principal_id) pair. See `packages/storage/src/auth-store.ts` and `packages/storage/src/index.ts`.
 
-**Increments 2-3 (OPEN):** 2 = human sessions with Supabase Auth, user_identities table, vault() async, delete localDevScope;
-3 = Agent Access screen + access log. The no-cache rule is tied to the Agent Access screen's copy
+**Increment 2 (IN PROGRESS):** Membership, sessions, and user identity mapping. New `memberships` table (keyed on lower-cased email, `principal_id` filled on first sign-in per ADR 0006 §6b) and `user_identities` table (provider subject id, kept OUT of PrincipalId per ADR 0006 §5 rule 1). `resolveSession(claims: SessionClaims)` on AuthStore, gated on membership. `scopeFromSession(claims)` in Authenticator, failing `'no-membership'` if unlisted. `addMember`, `removeMember`, `listMembers` on AuthStore port; removeMember revokes person and all their agents and tokens atomically (a prior test passed for the wrong reason: it checked the session, never the token). Member management via `npm run member -- <list|add|remove> [email]`. Still open: provider integration (Supabase Auth) and `vault()` async on ServerDeps. Both are blocked on risk-auth-provider.
+
+**Increment 3 (OPEN):** Agent Access screen + access log. The no-cache rule is tied to the Agent Access screen's copy
 (immediate revocation), and that rule outlives this decision. Max legitimate cache TTL = the revocation
 latency the UI promises.
 

@@ -24,6 +24,14 @@ events.recent all enforce the same grant boundary as docs.search/list/get and so
 is held by guarantee-grant-completeness: an enumerating test that fails loudly on any store method with
 no declared narrowing behavior, catching new methods tomorrow without editing the test.
 
+Dec-auth increment 2 (IN PROGRESS): New `memberships` and `user_identities` tables support human sessions.
+`memberships` keyed on lower-cased email with `principal_id` filled on first sign-in (ADR 0006 §6b).
+`user_identities` holds the provider's subject id, kept OUT of PrincipalId (ADR 0006 §5 rule 1) so a
+provider swap rewrites one table. AuthStore.resolveSession, addMember, removeMember, listMembers
+implemented in auth-store.ts. removeMember revokes person, all agents they created, and those agents'
+tokens atomically — a prior test failure: it checked session but never verified the token was actually
+revoked. addMember is restorative: remove-then-re-add round-trips membership, principal, and grant.
+
 Two new aggregate methods added to fix Library truncation: `count(scope, {folder?})` returns the true
 vault total, not the clamped page; `folders(scope)` returns every distinct folder in scope. Both apply
 the full scope filter (workspace AND Grant.sourceIds) in the WHERE clause, so they see past MAX_RESULTS

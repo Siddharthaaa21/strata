@@ -12,6 +12,10 @@ Not designed. The prototype's third nav item is labelled "Agent Access" but rout
 that is scaffolding, not a spec. The real screen manages MCP connections and per-agent scope,
 access log, and revocation.
 
+Member management ships as a CLI (`npm run member -- <list|add|remove> [email]`), not a screen, because
+increment 3 has no design (ADR 0006 §6b). The audience is a small team sharing one workspace; the operator
+workflow is more important than a UI invented under deadline.
+
 `dec-tenancy` (R1) no longer blocks design: per-agent scope is a `Grant` narrowing by `sourceIds`
 within a workspace. `dec-auth` (R7) resolves the design-blocking question (ADR 0002 OPEN item 3):
 per-source narrowing is confirmed sufficient for M7 — doc-id allow-lists are rejected (invalid on

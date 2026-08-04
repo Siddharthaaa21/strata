@@ -184,6 +184,213 @@ export function createAuthStore(db: SqlDriver): AuthStore {
       return { principalId, presented: token.presented };
     },
 
+    /**
+     * Resolves a verified session, creating the principal on first sign-in.
+     *
+     * Membership is looked up by EMAIL, not by the provider's subject id, because the allowlist is
+     * written before anyone signs in — an operator adds an address, not a stranger's opaque
+     * provider id. The subject is recorded on first sign-in so later logins are stable even if the
+     * person changes their email at the provider.
+     */
+    async resolveSession(claims) {
+      const email = claims.email.trim().toLowerCase();
+
+      const membership = await db.query<{
+        workspace_id: string;
+        principal_id: string | null;
+        revoked_at: Date | string | null;
+      }>(
+        `SELECT workspace_id, principal_id, revoked_at FROM memberships WHERE email = $1`,
+        [email],
+      );
+
+      const member = membership.rows[0];
+      // Not on the allowlist, or membership ended. Both are "no", and the caller reports one word.
+      if (member === undefined || member.revoked_at != null) return undefined;
+
+      const workspaceId = member.workspace_id as WorkspaceId;
+
+      if (member.principal_id === null) {
+        // First sign-in. Principal, grant, identity link, and the membership update all in ONE
+        // statement — a principal without a grant is an account that exists and cannot be used, and
+        // two concurrent first logins must not create two principals for one person.
+        const principalId = randomUUID();
+        const grantId = randomUUID();
+        const now = new Date().toISOString();
+
+        await db.query(
+          `WITH p AS (
+             INSERT INTO principals (workspace_id, id, kind, display_name, created_at)
+             VALUES ($1,$2,'user',$3,$4)
+             RETURNING id
+           ), g AS (
+             INSERT INTO grants (workspace_id, id, principal_id, source_ids, created_at)
+             SELECT $1,$5,p.id,NULL,$4 FROM p RETURNING id
+           ), i AS (
+             INSERT INTO user_identities (provider, subject, workspace_id, principal_id, linked_at)
+             SELECT $6,$7,$1,p.id,$4 FROM p
+             ON CONFLICT (provider, subject) DO NOTHING
+             RETURNING principal_id
+           )
+           UPDATE memberships SET principal_id = $2, joined_at = $4
+            WHERE workspace_id = $1 AND email = $8 AND principal_id IS NULL`,
+          [workspaceId, principalId, email, now, grantId, claims.provider, claims.subject, email],
+        );
+      }
+
+      // Re-read rather than trusting what was just written: a concurrent first sign-in may have won
+      // the UPDATE, in which case the principal to use is theirs, not the one minted above.
+      const { rows } = await db.query<{
+        principal_id: string;
+        kind: string;
+        principal_revoked_at: Date | string | null;
+        grant_id: string;
+        grant_principal_id: string;
+        grant_source_ids: string[] | null;
+        grant_created_at: Date | string;
+        grant_revoked_at: Date | string | null;
+      }>(
+        `SELECT p.id AS principal_id, p.kind, p.revoked_at AS principal_revoked_at,
+                g.id AS grant_id, g.principal_id AS grant_principal_id,
+                g.source_ids AS grant_source_ids, g.created_at AS grant_created_at,
+                g.revoked_at AS grant_revoked_at
+           FROM memberships m
+           JOIN principals p ON p.workspace_id = m.workspace_id AND p.id = m.principal_id
+           JOIN grants     g ON g.workspace_id = m.workspace_id
+                            AND g.principal_id = p.id AND g.revoked_at IS NULL
+          WHERE m.workspace_id = $1 AND m.email = $2`,
+        [workspaceId, email],
+      );
+
+      const row = rows[0];
+      if (row === undefined) return undefined;
+
+      return {
+        principalId: row.principal_id as PrincipalId,
+        kind: row.kind as PrincipalKind,
+        workspaceId,
+        grant: {
+          id: row.grant_id as GrantId,
+          workspaceId,
+          principalId: row.grant_principal_id as PrincipalId,
+          createdAt: new Date(row.grant_created_at).toISOString(),
+          ...(row.grant_source_ids === null ? {} : { sourceIds: row.grant_source_ids as SourceId[] }),
+          ...(row.grant_revoked_at == null ? {} : { revokedAt: iso(row.grant_revoked_at)! }),
+        },
+        // Unused on this path — sessions carry no secret — but the port is one shape.
+        tokenHash: new Uint8Array(0),
+        ...(row.principal_revoked_at == null
+          ? {}
+          : { principalRevokedAt: iso(row.principal_revoked_at)! }),
+      };
+    },
+
+    /**
+     * Adds or restores a member. Idempotent.
+     *
+     * Restoring has to undo everything `removeMember` did, or remove-then-re-add does not round
+     * trip: the membership row comes back, the principal stays revoked, and the returning person
+     * hits `Unauthorized` with nothing in the UI to explain why. That is a support ticket generated
+     * by an asymmetry, and the asymmetry is invisible — the operator sees the member listed and
+     * reasonably concludes it worked.
+     *
+     * Their agent TOKENS stay revoked deliberately. A credential that was revoked should require a
+     * deliberate re-issue; silently reanimating one because someone was re-invited is the opposite
+     * of what revocation means.
+     */
+    async addMember(input) {
+      const workspaceId = input.workspaceId;
+      const email = input.email.trim().toLowerCase();
+      const now = new Date().toISOString();
+
+      await db.query(
+        `INSERT INTO memberships (workspace_id, email, invited_by, invited_at)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (workspace_id, email) DO UPDATE SET revoked_at = NULL`,
+        [workspaceId, email, input.invitedBy ?? null, now],
+      );
+
+      await db.query(
+        `UPDATE principals SET revoked_at = NULL
+          WHERE workspace_id = $1
+            AND id = (SELECT principal_id FROM memberships WHERE workspace_id = $1 AND email = $2)`,
+        [workspaceId, email],
+      );
+
+      // A returning member needs an active grant. Their old one was left revoked by removeMember,
+      // and grants_one_active means we cannot simply un-revoke it if another has since been issued.
+      await db.query(
+        `INSERT INTO grants (workspace_id, id, principal_id, source_ids, created_at)
+         SELECT $1, $3, m.principal_id, NULL, $4
+           FROM memberships m
+          WHERE m.workspace_id = $1 AND m.email = $2 AND m.principal_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM grants g
+               WHERE g.workspace_id = $1 AND g.principal_id = m.principal_id AND g.revoked_at IS NULL
+            )`,
+        [workspaceId, email, randomUUID(), now],
+      );
+    },
+
+    /**
+     * Ends a membership, and kills the principal and every token it owns in the same statement.
+     *
+     * A membership revoked while its agent tokens keep working is not revoked — the person simply
+     * stops using the web app and keeps their MCP access. Doing it in one statement means there is
+     * no window where one has happened and the other has not.
+     */
+    async removeMember(workspaceId, email) {
+      const now = new Date().toISOString();
+      await db.query(
+        `WITH m AS (
+           UPDATE memberships SET revoked_at = $3
+            WHERE workspace_id = $1 AND email = $2 AND revoked_at IS NULL
+           RETURNING principal_id
+         ), doomed AS (
+           -- The member, AND every agent or service principal they created.
+           --
+           -- Agents are separate principals, so revoking only the person left their agents alive:
+           -- a departing teammate loses the web app and keeps an MCP token that reads the entire
+           -- vault. That is the half of "remove this person" that actually matters, and it is the
+           -- half that is invisible — nothing in the UI would have shown the orphaned agent.
+           SELECT principal_id AS id FROM m WHERE principal_id IS NOT NULL
+           UNION
+           SELECT p.id FROM principals p
+            WHERE p.workspace_id = $1
+              AND p.created_by IN (SELECT principal_id FROM m WHERE principal_id IS NOT NULL)
+         ), revoked_principals AS (
+           UPDATE principals SET revoked_at = $3
+            WHERE workspace_id = $1 AND id IN (SELECT id FROM doomed)
+           RETURNING id
+         )
+         UPDATE agent_tokens SET revoked_at = $3
+          WHERE workspace_id = $1 AND principal_id IN (SELECT id FROM revoked_principals)`,
+        [workspaceId, email.trim().toLowerCase(), now],
+      );
+    },
+
+    async listMembers(workspaceId) {
+      const { rows } = await db.query<{
+        email: string;
+        principal_id: string | null;
+        invited_at: Date | string;
+        joined_at: Date | string | null;
+        revoked_at: Date | string | null;
+      }>(
+        `SELECT email, principal_id, invited_at, joined_at, revoked_at
+           FROM memberships WHERE workspace_id = $1 ORDER BY email`,
+        [workspaceId],
+      );
+
+      return rows.map((r) => ({
+        email: r.email,
+        ...(r.principal_id === null ? {} : { principalId: r.principal_id as PrincipalId }),
+        invitedAt: new Date(r.invited_at).toISOString(),
+        ...(r.joined_at == null ? {} : { joinedAt: iso(r.joined_at)! }),
+        ...(r.revoked_at == null ? {} : { revokedAt: iso(r.revoked_at)! }),
+      }));
+    },
+
     /** Rate-limited in SQL so a burst of calls writes once, not once per call. */
     async touchToken(tokenId, at) {
       await db.query(
