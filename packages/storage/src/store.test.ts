@@ -426,3 +426,60 @@ test('count respects a folder filter and a narrowed grant', async () => {
   assert.equal(await store.count(scopeFor(WS_A, [SRC_GITHUB])), 1, 'the grant narrows the count too');
   assert.equal(await store.count(scopeFor(WS_B)), 0, 'and the workspace boundary holds');
 });
+
+test('a multi-word query with one absent term degrades instead of returning nothing', async () => {
+  // websearch_to_tsquery is AND-semantics, so adding a word to narrow a search used to empty the
+  // page entirely. To a reader that says "the vault does not contain this" rather than "one of your
+  // words does not appear" — a much stronger and wrong claim.
+  const { store } = await freshStore();
+  const scope = scopeFor(WS_A);
+
+  await store.upsert(scope, doc({ id: 'a' as DocId, externalId: 'a.md', title: 'Tenancy and scoping' }));
+  await store.upsert(scope, doc({ id: 'b' as DocId, externalId: 'b.md', title: 'Retry strategy' }));
+
+  const both = await store.search(scope, 'tenancy scoping');
+  assert.deepEqual(both.map((h) => h.id), ['a'], 'when every term matches, precision is preserved');
+
+  const oneMissing = await store.search(scope, 'tenancy zebrafish');
+  assert.deepEqual(oneMissing.map((h) => h.id), ['a'], 'an absent term must not empty the result');
+
+  const noneMatch = await store.search(scope, 'zebrafish pangolin');
+  assert.deepEqual(noneMatch, [], 'but a query matching nothing still returns nothing');
+});
+
+test('the strict result wins whenever there is one — the fallback never dilutes it', async () => {
+  // The failure mode of an OR-always search: a document matching one common word outranks nothing,
+  // but it crowds a page that had exact matches. The fallback must only fire on a genuine miss.
+  const { store } = await freshStore();
+  const scope = scopeFor(WS_A);
+
+  await store.upsert(scope, doc({ id: 'exact' as DocId, externalId: 'x.md', title: 'Tenancy scoping rules' }));
+  await store.upsert(scope, doc({ id: 'partial' as DocId, externalId: 'y.md', title: 'Tenancy alone' }));
+
+  const hits = await store.search(scope, 'tenancy scoping');
+  assert.deepEqual(hits.map((h) => h.id), ['exact'], 'partial matches stay out while an exact one exists');
+});
+
+test('the fallback ranks documents matching more terms first', async () => {
+  const { store } = await freshStore();
+  const scope = scopeFor(WS_A);
+
+  await store.upsert(scope, doc({ id: 'two' as DocId, externalId: 'a.md', title: 'Tenancy and retries' }));
+  await store.upsert(scope, doc({ id: 'one' as DocId, externalId: 'b.md', title: 'Retries only' }));
+
+  // No document has all three, so the loose form runs and ranking has to do the ordering.
+  const hits = await store.search(scope, 'tenancy retries zebrafish');
+  assert.equal(hits[0]?.id, 'two', 'the document matching two terms comes first');
+  assert.equal(hits.length, 2);
+});
+
+test('query punctuation and operators still cannot error', async () => {
+  const { store } = await freshStore();
+  const scope = scopeFor(WS_A);
+  await store.upsert(scope, doc());
+
+  for (const q of ['', '   ', '&|!', '"unclosed', '\\', 'a:*', '-tenancy', '<>']) {
+    const hits = await store.search(scope, q);
+    assert.ok(Array.isArray(hits), `"${q}" must return a list, never throw`);
+  }
+});

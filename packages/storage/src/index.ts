@@ -461,13 +461,40 @@ export function createDocStore(db: SqlDriver): DocStore {
         updated_at: Date | string;
         rank: number | string;
       }>(
-        `SELECT id, source_id, title, excerpt, folder, tags, updated_at,
-                ts_rank_cd(search_vector, websearch_to_tsquery('english', $2)) AS rank
-           FROM docs
-          WHERE workspace_id = $1
-            AND ($3::text[] IS NULL OR source_id = ANY($3::text[]))
-            AND search_vector @@ websearch_to_tsquery('english', $2)
-          ORDER BY rank DESC, updated_at DESC
+        // Match on ALL terms if anything does, otherwise on ANY — decided in one statement rather
+        // than by issuing a second query on a miss.
+        //
+        // `websearch_to_tsquery` is AND-semantics, so "tenancy zebrafish" returned nothing at all
+        // when one term was absent: a user who adds a word to narrow a search got an empty page
+        // instead of a shorter list, which reads as "the vault does not contain this" rather than
+        // "one of your words does not appear".
+        //
+        // The `strict` CTE is the AND result. `EXISTS (SELECT 1 FROM strict)` picks which predicate
+        // the outer query uses, so precision is preserved whenever precision is available and the
+        // fallback only ever runs when the alternative was zero rows. Ranking is unchanged and does
+        // the rest: `ts_rank_cd` scores a document matching both terms above one matching either,
+        // so the OR results arrive in the order a reader would want them.
+        `WITH q AS (
+           SELECT websearch_to_tsquery('english', $2) AS strict_q,
+                  -- OR form of the same terms. plainto_tsquery gives '&'-joined lexemes after the
+                  -- same normalization, so replacing the operator keeps stemming and stop-word
+                  -- handling identical rather than re-tokenizing by hand.
+                  replace(plainto_tsquery('english', $2)::text, ' & ', ' | ')::tsquery AS loose_q
+         ), strict AS (
+           SELECT 1 FROM docs, q
+            WHERE workspace_id = $1
+              AND ($3::text[] IS NULL OR source_id = ANY($3::text[]))
+              AND search_vector @@ q.strict_q
+            LIMIT 1
+         )
+         SELECT d.id, d.source_id, d.title, d.excerpt, d.folder, d.tags, d.updated_at,
+                ts_rank_cd(d.search_vector, q.strict_q) AS rank
+           FROM docs d, q
+          WHERE d.workspace_id = $1
+            AND ($3::text[] IS NULL OR d.source_id = ANY($3::text[]))
+            AND d.search_vector @@ (CASE WHEN EXISTS (SELECT 1 FROM strict)
+                                         THEN q.strict_q ELSE q.loose_q END)
+          ORDER BY rank DESC, d.updated_at DESC
           LIMIT $4`,
         [filter.workspaceId, query, sourceIds === undefined ? null : [...sourceIds], capped],
       );
