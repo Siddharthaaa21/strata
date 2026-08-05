@@ -22,3 +22,5 @@ per-source narrowing is confirmed sufficient for M7 — doc-id allow-lists are r
 each ingest run, unbounded, no operable UI). The constraint that closes design is the revocation
 promise: the Agent Access screen's copy sets the maximum legitimate Scope cache TTL (if it says
 immediate, the TTL is zero). Designed as part of dec-auth increment 3, not before.
+
+The access log this screen needs now exists as a data source (`AccessLog.recent`, guarantee-access-log), so increment 3 no longer has to design the table and the screen together. The screen itself still has no handoff design.

@@ -25,6 +25,7 @@ export * from './driver.ts';
 export * from './sources.ts';
 export * from './events.ts';
 export * from './auth-store.ts';
+export * from './access-log.ts';
 
 // `export *` re-exports but does not bring a name into this module's scope; ReadonlySourceStore
 // below is declared here, so the type it narrows has to be imported explicitly.
@@ -210,6 +211,35 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
 -- freshly created databases — which is exactly the class of bug that passes every test (tests start
 -- empty) and fails on the one database that matters.
 ALTER TABLE import_events ADD COLUMN IF NOT EXISTS external_id text;
+
+-- Who read what (ADR 0005 section 5). Promised when the fencing strategy was designed and not built
+-- until now; it is the compensating control for that ADR's own admission that prevention is
+-- incomplete. An injection that succeeds is discovered here or not at all.
+--
+-- NEVER stores content. A log holding the payload is a second copy of the problem: it would sit
+-- outside every fence, be read by whoever debugs an incident, and grow without the retention anyone
+-- applies to documents. result_hash is enough to answer "was this the same response as that one"
+-- and cannot answer "what did it say", which is the correct amount of power for an audit trail.
+--
+-- Failures are logged too, and the UNAUTHORIZED ones are the point: a stream of them is what a
+-- credential being probed looks like. principal_id is null exactly there, because a request that
+-- failed to authenticate has no principal to attribute it to, and inventing one would be worse.
+CREATE TABLE IF NOT EXISTS access_log (
+  id           text        NOT NULL,
+  workspace_id text,                          -- null when authentication failed
+  principal_id text,                          -- null when authentication failed
+  tool         text        NOT NULL,
+  outcome      text        NOT NULL,          -- 'ok' | 'NotFound' | 'Unauthorized' | ...
+  doc_ids      text[]      NOT NULL DEFAULT '{}',
+  result_hash  text,                          -- sha256 of the response. Never the response.
+  occurred_at  timestamptz NOT NULL,
+  PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS access_log_recent
+  ON access_log (workspace_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS access_log_by_principal
+  ON access_log (principal_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS docs_fts ON docs USING GIN (search_vector);
 CREATE INDEX IF NOT EXISTS docs_scope ON docs (workspace_id, source_id) INCLUDE (updated_at);

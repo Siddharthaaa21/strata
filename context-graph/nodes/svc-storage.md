@@ -60,3 +60,5 @@ the fixtures the screens currently read from.
 Also backs list_sources: a sources table carrying its own workspaceId, since Source is returned
 independently of any Doc and joining through docs would leak every connected account in a workspace
 with no documents.
+
+M6 access log: new `access_log` table (workspace, principal, tool, outcome, doc_ids, result_hash, occurred_at), indexed by workspace+time and principal+time. Stores a SHA-256 of each response and never the response itself — a log holding the payload is a second copy of the problem it exists to detect. Nothing prunes it yet; retention is open.

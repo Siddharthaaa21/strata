@@ -5,7 +5,7 @@ title: MCP server
 status: in-progress
 owner: mcp
 spec: .claude/skills/mcp-surface/SKILL.md
-depends_on: [contract-doc, contract-scope, svc-search, dec-tenancy, risk-injection, dec-untrusted-content, dec-storage-search, guarantee-fencing, dec-auth]
+depends_on: [contract-doc, contract-scope, svc-search, dec-tenancy, risk-injection, dec-untrusted-content, dec-storage-search, guarantee-fencing, dec-auth, guarantee-access-log]
 ---
 
 All three tools implemented in apps/mcp: search_docs, get_doc, list_sources. Handlers are pure
@@ -31,3 +31,5 @@ at the type level that D5's "no mutating tool exists" cannot regress. Workspace 
 agent token, not from env. Still open: the strata-verifier pass that closes R2.
 
 M7R4 (MED, argument validation): Published `inputSchema` was never enforced — `server.ts` uses the low-level request handler which does not validate arguments against a tool's schema. `limit: 2.5` reached Postgres and returned `InternalError`. Now non-integer limits, out-of-range limits, and unknown arguments fail fast as `InvalidInput`. NOTE: oversized limits are CLAMPED, not rejected — the tool's own description promises "clamped regardless of the value sent", and contradicting a published contract would be worse than strict enforcement.
+
+M6 access log: every tool call is now audited — outcome, doc ids, and a hash of the response, never the response. `ServerDeps.log` is OPTIONAL and recording is fire-and-forget, so a logging outage degrades to a missing row rather than a dead tool surface. Failed authentication is logged with a null principal, because a request that failed to authenticate has none to attribute it to. See guarantee-access-log.
