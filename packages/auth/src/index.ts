@@ -17,6 +17,7 @@ import type { AuthStore, SessionClaims } from './store.ts';
 
 export * from './tokens.ts';
 export * from './store.ts';
+export * from './session.ts';
 
 /** Why a credential was rejected. For OUR logs — never for the wire. */
 export type AuthFailureKind = 'malformed' | 'unknown' | 'revoked' | 'expired' | 'no-membership';
