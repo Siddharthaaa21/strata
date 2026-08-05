@@ -15,7 +15,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { AuthError } from '@strata/auth';
 import type { Scope } from '@strata/core';
-import type { ReadonlyDocStore, ReadonlySourceStore } from '@strata/storage';
+import { docIdsIn, type AccessLog, type AccessOutcome, type ReadonlyDocStore, type ReadonlySourceStore } from '@strata/storage';
 import { TOOL_SCHEMAS, ToolError, getDoc, listSources, searchDocs } from './tools.ts';
 
 /**
@@ -43,6 +43,15 @@ export interface ServerDeps {
    * immediate (ADR 0006 §4). A cached `Scope` is a `Grant` revocation that never takes effect.
    */
   scope(): Promise<Scope>;
+  /**
+   * Optional so every existing test constructs a server without one, and so a logging outage is a
+   * missing row rather than a dead tool surface.
+   *
+   * ADR 0005 section 5's compensating control. Recording is fire-and-forget at the call site below:
+   * an audit trail that can fail the request it audits is worse than none, because the outage
+   * arrives exactly when the log is most interesting.
+   */
+  readonly log?: AccessLog;
 }
 
 const json = (value: unknown): CallToolResult => ({
@@ -76,19 +85,47 @@ export function createStrataServer(deps: ServerDeps): Server {
     const { name, arguments: args } = request.params;
     const input = (args ?? {}) as Record<string, unknown>;
 
+    // Captured so the catch can attribute a failure. Undefined means authentication itself failed,
+    // and the log says so rather than inventing a principal.
+    let scope: Scope | undefined;
+
+    /** Never awaited, never allowed to reject. See ServerDeps.log. */
+    const audit = (outcome: AccessOutcome, response?: unknown) => {
+      void deps.log
+        ?.record({
+          ...(scope === undefined
+            ? {}
+            : { workspaceId: scope.workspaceId, principalId: scope.principal.id }),
+          tool: name,
+          outcome,
+          ...(response === undefined ? {} : { docIds: docIdsIn(response), response }),
+        })
+        .catch(() => {});
+    };
+
     try {
       // Inside the try, deliberately: verification can now fail, and an AuthError escaping this
       // handler would surface as a transport-level crash instead of a tool result.
-      const scope = await deps.scope();
+      scope = await deps.scope();
 
       switch (name) {
-        case 'search_docs':
-          return json(await searchDocs(scope, deps.docs, input));
-        case 'get_doc':
-          return json(await getDoc(scope, deps.docs, input));
-        case 'list_sources':
-          return json(await listSources(scope, deps.sources));
+        case 'search_docs': {
+          const out = await searchDocs(scope, deps.docs, input);
+          audit('ok', out);
+          return json(out);
+        }
+        case 'get_doc': {
+          const out = await getDoc(scope, deps.docs, input);
+          audit('ok', out);
+          return json(out);
+        }
+        case 'list_sources': {
+          const out = await listSources(scope, deps.sources);
+          audit('ok', out);
+          return json(out);
+        }
         default:
+          audit('UnknownTool');
           return failure('UnknownTool');
       }
     } catch (e) {
@@ -102,11 +139,18 @@ export function createStrataServer(deps: ServerDeps): Server {
       // enumerates nothing, since they already hold it. Collapsing the two would make a revoked
       // agent indistinguishable from an empty vault — an unresolvable support problem. The oracle
       // boundary is facts about the vault, not facts about the caller's own credential.
-      if (e instanceof AuthError) return failure('Unauthorized');
+      if (e instanceof AuthError) {
+        // The most interesting rows in the table. A stream of these is what a credential being
+        // probed looks like, and it is exactly the case with no principal to attribute.
+        audit('Unauthorized');
+        return failure('Unauthorized');
+      }
 
       // Only ToolError messages cross the boundary. Anything else - a driver error, a bug - would
       // otherwise leak schema names, SQL, or ids into a model's context.
-      return failure(e instanceof ToolError ? e.message : 'InternalError');
+      const message = e instanceof ToolError ? e.message : 'InternalError';
+      audit(message as AccessOutcome);
+      return failure(message);
     }
   });
 

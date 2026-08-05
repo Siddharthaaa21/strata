@@ -26,6 +26,7 @@ import pg from 'pg';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createAuthenticator } from '@strata/auth';
 import {
+  createAccessLog,
   createAuthStore,
   createDocStore,
   createSourceStore,
@@ -60,6 +61,9 @@ const auth = createAuthenticator(createAuthStore(db));
 const server = createStrataServer({
   docs: createDocStore(db),
   sources: createSourceStore(db),
+  // ADR 0005 section 5. Fire-and-forget inside the server, so a logging outage is a missing row
+  // rather than a dead tool surface.
+  log: createAccessLog(db),
   // Verified per call, never captured. Over stdio the token is fixed for the process lifetime, but
   // the *scope* is not: re-resolving is what makes revocation immediate rather than
   // effective-next-restart, and it is the same code path a remote transport will use per request.

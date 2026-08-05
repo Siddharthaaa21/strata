@@ -31,3 +31,5 @@ verbatim by design. ADR 0005 rejected stripping suspicious phrasing as unbounded
 this corpus will legitimately contain documents *about* prompt injection. The mitigation is the
 label, not removal. The suite demonstrates enumerated attacks failing; it does not prove injection
 impossible.
+
+ADR 0005 section 5 is now implemented (guarantee-access-log) — it had been listed as an open sub-item of R2 for four review rounds. Only that sub-item closes. R2 itself does NOT: rounds one through four each found real defects in the previous round fixes, and the round-five pass has not reported.
