@@ -28,7 +28,18 @@ Domain skills — the "how Strata specifically works" layer:
   workflows/    Multi-agent orchestration scripts (opt-in, user-triggered).
   hooks/        Shell hooks wired in settings.json.
   settings.json Shared config: permissions, env, hooks.
+  worktrees/    Gitignored. Full checkouts created by `isolation: 'worktree'`.
 ```
+
+`worktrees/` is not source and is never committed, but it is not free either: each entry is a
+whole checkout with its own `node_modules`, and one left behind after its branch merged sat at
+555M until it was noticed. `git worktree list` is the inventory; `git worktree remove <path>`
+reclaims it and keeps the branch.
+
+One trap worth naming, because it produces confident wrong answers rather than errors: a shell
+that `cd`s into a worktree stays there across later commands, so `cat`, `git check-ignore`, and
+every relative path silently read **that branch's** files instead of the ones being worked on.
+Prefer absolute paths, or `cd` back.
 
 ## The shape of a normal task
 
