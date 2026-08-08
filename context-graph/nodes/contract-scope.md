@@ -21,3 +21,19 @@ credentials via `scopeFromAgentToken` (agent token) or `scopeFromSession` (human
 and no verification cache, so every call verifies freshly (the token may be revoked, the person may be
 removed from membership, mid-request). Anything that reads a store or builds an MCP payload depends on
 this node, not just on `contract-doc`.
+
+**There is now exactly one way in per caller kind, and `localDevScope` is deleted** (M7 increment 2).
+It minted a `Scope` from an environment variable — no credential, no verification, no revocation —
+and was honestly labelled "not authentication" for its whole life. The labelling is precisely why it
+had to be removed rather than kept: at a call site, a function that FABRICATES authority is
+indistinguishable from one that CHECKS it, since both return a `Scope`. Which one a given line called
+was a fact about that line, invisible to the type system and to a reviewer skimming. Every caller had
+to be trusted rather than verified, and the one that eventually shipped would have looked like all
+the others. Deleting it turns that class of mistake into a compile error.
+
+Callers today: people via `scopeFromSession` ([[screen-login]]), agents and the local CLIs via
+`scopeFromAgentToken` (`scripts/lib/cli-scope.mjs`, [[svc-mcp]]).
+
+One documented exception: `scripts/db-setup.mjs` calls `mintScope` directly. It runs before any
+principal exists — it is the statement that creates the schema — so it cannot present a credential.
+It writes and deletes its own probe rows and touches nothing else.

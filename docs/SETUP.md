@@ -102,7 +102,23 @@ SUPABASE_JWT_SECRET=<the JWT secret>
 Setting it switches verification to HS256. Unlike the anon key this one **is** a secret: it signs
 tokens, so anyone holding it can mint a session as anybody.
 
-### 5. Add yourself to the allowlist
+### 5. Mint a CLI token
+
+`npm run ingest` and `npm run search` authenticate like every other caller. There is no anonymous
+mode and no development stub — `localDevScope` is deleted (M7 increment 2), so a credential is the
+only way in.
+
+```bash
+npm run agent:create -- "Local CLI" --kind service --by <your member email>
+```
+
+Put the printed `STRATA_AGENT_TOKEN=…` line into `.env` renamed to `STRATA_CLI_TOKEN=…`. It is
+shown once and cannot be recovered; mint a new one if you lose it and revoke the old.
+
+Chicken-and-egg: `--by` requires a member who has signed in at least once, so do step 6 first if
+this is a brand-new workspace.
+
+### 6. Add yourself to the allowlist
 
 The allowlist is the invite. A valid Google or email account is not access — membership is, and it
 is ours to decide rather than the provider's.
