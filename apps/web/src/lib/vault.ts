@@ -28,7 +28,7 @@ import {
   type EventStore,
   type SourceStore,
 } from '@strata/storage';
-import { claimsFromCookies, supabaseSettings } from './session.ts';
+import { claimsFromCookies } from './session.ts';
 
 /**
  * Next loads `.env` from the app directory; ours lives at the monorepo root so the CLI scripts and
@@ -136,11 +136,13 @@ export async function vault(): Promise<Vault> {
     throw new Error('STRATA_WORKSPACE_ID is not set. See docs/SETUP.md.');
   }
 
-  const settings = supabaseSettings();
   const jar = await cookies();
   const asMap = new Map(jar.getAll().map((c) => [c.name, c.value]));
 
-  const claims = await claimsFromCookies(asMap, settings);
+  // No settings argument: `claimsFromCookies` picks the local issuer when it is explicitly enabled
+  // on a non-deployed machine, and the real provider otherwise. Everything after this line is
+  // identical either way.
+  const claims = await claimsFromCookies(asMap);
   if (claims === undefined) throw new NotSignedIn('no valid session cookie');
 
   const db = fromPoolLike(pool());
@@ -201,16 +203,65 @@ export interface SourceListItem {
   readonly status: string;
 }
 
-/** Loads the Library screen's data. Returns plain objects safe to hand to a Client Component. */
-export async function loadLibrary(): Promise<{
+/**
+ * Loads the Library screen's data. Returns plain objects safe to hand to a Client Component.
+ *
+ * `query` runs a real ranked search ACROSS THE WHOLE VAULT, not a filter over the loaded page.
+ * That distinction is the entire point, and getting it wrong is this codebase's most-repeated bug:
+ * the doc count and the folder pills were both, at different times, describing one clamped page as
+ * though it were the vault. A client-side search box would have been the third instance and the
+ * worst, because "no results" is indistinguishable from "not on this page" — the user would
+ * conclude the document is not in Strata.
+ *
+ * It is also the first time `svc-search`'s provenance-weighted ranking (ADR 0004) is reachable by a
+ * human. It has been implemented and tested since M4 and, until now, only agents could use it.
+ */
+export async function loadLibrary(query?: string): Promise<{
   docs: DocListItem[];
   sources: SourceListItem[];
   /** The real number in scope, which is NOT `docs.length` — that is one clamped page. */
   total: number;
   /** Every folder in scope, not just those represented in the page above. */
   folders: string[];
+  /** Echoed back so the view can render the search state without re-parsing the URL. */
+  query: string;
 }> {
+  const q = query?.trim() ?? '';
   const { docs, sources, scope } = await requireVault();
+
+  if (q !== '') {
+    // Ranked, whole-vault, scope-filtered in SQL. `count` and `folders` still describe the WHOLE
+    // workspace rather than the result set: they are the "you are searching within this" context,
+    // and recomputing them from matches would make the subtitle change meaning between states.
+    const [hits, srcs, total, folders] = await Promise.all([
+      docs.search(scope, q),
+      sources.list(scope),
+      docs.count(scope),
+      docs.folders(scope),
+    ]);
+
+    return {
+      query: q,
+      total,
+      folders: [...folders],
+      docs: hits.map((d) => ({
+        id: d.id,
+        sourceId: d.sourceId,
+        title: d.title,
+        excerpt: d.excerpt,
+        folder: d.folder,
+        updatedAt: d.updatedAt,
+      })),
+      sources: srcs.map((s) => ({
+        id: s.id,
+        kind: s.kind,
+        name: s.name,
+        description: s.description,
+        status: s.status,
+      })),
+    };
+  }
+
   // Count and folders are queried separately and deliberately. `list` is clamped to MAX_RESULTS, so
   // deriving either from its result describes the page rather than the vault — which is how the
   // Library came to report "50 docs" for a 312-document workspace and to hide any folder whose
@@ -223,6 +274,7 @@ export async function loadLibrary(): Promise<{
   ]);
 
   return {
+    query: '',
     total,
     folders: [...folders],
     docs: rows.map((d) => ({

@@ -128,7 +128,17 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
       `findKnown`/`upsert`/`events.recent`. Not exploitable today — nothing mints a narrowed grant —
       but it must be complete before M7 issues the first one. Tracked in R2's open list.
 
-**Done when** the Library search box returns real ranked results. — **Met.**
+**Done when** the Library search box returns real ranked results. — **Met 2026-08-08, not on
+2026-08-02 when this line first said so.**
+
+That earlier "Met" was false, and the way it was false is worth keeping. The criterion names the
+**Library search box**; it was marked met on the strength of 13 passing storage tests. There was no
+search box. There had never been one — `git log -S` finds no search input in `apps/web` at any
+commit until today. `packages/storage` returned real ranked results, which is a different claim
+than the one written here, and nobody opened the page to notice.
+
+Now genuinely met: a GET form in the sidebar navigates to `/?q=`, the Server Component runs
+`docs.search`, and the results render ranked. Verified by using it, not by a test run — see D17.
 
 Carried out of M4, **partially closed 2026-08-02**: `docs.list` clamps to `MAX_RESULTS` (50), which
 is correct as an anti-exfiltration ceiling for an agent and wrong as a page size for a human.
@@ -257,9 +267,14 @@ Audience decided 2026-08-04: a few teammates, one shared workspace (ADR 0006 sec
       `agent:create` requires `--by <member email>` so removal can actually reach the agent, and
       `removeMember` returns counts so the CLI stops claiming a revocation it did not perform.
       Two of the new tests failed mutation on the first attempt and were rewritten — see D16.
-- [ ] Supabase Auth provider integration — the only piece needing credentials
-- [ ] `vault()` becomes async and reads the session
-- [ ] `localDevScope` deleted — dev uses a real credential through the real path, never a second one
+- [x] `vault()` is async and mints its `Scope` from the caller's session — cookie, verified JWS,
+      membership. Magic-link login, PKCE callback, POST-only sign-out. No unauthenticated fallback:
+      an unconfigured provider throws rather than quietly serving an open mode.
+- [ ] Supabase Auth **proven against a live project** — the only piece needing credentials, and the
+      one thing that could not be tested without them
+- [ ] `localDevScope` deleted. Unreachable from the web app now, but `scripts/ingest.mjs` and
+      `scripts/search.mjs` still call it, so the function still exists. They move to
+      `STRATA_CLI_TOKEN` and then it goes.
 
 **Increment 3 — the screen**
 

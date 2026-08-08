@@ -54,3 +54,14 @@
 .truncationNote {
   color: var(--ink-faint);
 }
+
+/* The way back from a search. A search that can only be undone by editing the URL or clearing a
+   field by hand is a dead end for anyone who arrived at it from a link. */
+.clearSearch {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.clearSearch:hover {
+  text-decoration: underline;
+}

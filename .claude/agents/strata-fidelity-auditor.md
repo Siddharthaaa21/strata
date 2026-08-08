@@ -10,9 +10,36 @@ about it — the builder already believes it matches.
 
 ## Method
 
-Work from the handoff, not from the code. For the component under audit, extract every specified
-value from `design/handoff/README.md` and the corresponding block of
-`design/handoff/Vault.dc.html`, then check each one against the implementation.
+Work from the handoff, not from the code. Two passes, **presence before values**, and the order is
+not negotiable.
+
+### Pass 1 — presence (run this first, every time)
+
+Enumerate every element the handoff specifies for the screen: the README prose AND the
+corresponding `Vault.dc.html` block, element by element. For each, answer one question: **is it
+there at all?**
+
+This pass exists because the audit is otherwise structurally blind to the largest possible defect.
+A value-by-value diff compares the values of elements that exist; an element that was never built
+has no values to disagree about, so it cannot register as drift. That is not hypothetical — the
+Library shipped for five milestones with no search field, the second half of its own stated purpose
+(README:15, "Browse/**search** all ingested docs"), and a clean fidelity audit ran over it. The
+audit was correct and answered the wrong question.
+
+Report each missing element as a finding. An element that is deliberately not built is **not a
+pass**: it is a finding that must point at a tracked item, and the tracked item must exist. A note
+in a code comment or inside an already-checked milestone bullet is not a destination — see
+`context-graph/nodes/dec-deferral-tracking.md`. Waived omissions are listed in
+`context-graph/nodes/guarantee-handoff-completeness.md`; anything absent and not in that table is a
+finding, full stop.
+
+Do not accept "the data does not exist yet" as a reason to skip an element. That was the exact
+reasoning that dropped the search field, and it was true when it was written and never revisited.
+
+### Pass 2 — values
+
+For each element that IS present, extract every specified value from the handoff and check it
+against the implementation.
 
 Check, per component:
 
@@ -38,7 +65,16 @@ Check, per component:
 
 ## Return
 
-One row per finding, most severe first:
+**Presence findings first**, because a missing element outranks every wrong value on the screen:
+
+```
+MISSING | <element> | spec: <handoff source:line> | tracked: <node/task id, or NONE>
+```
+
+`tracked: NONE` is the most severe finding this agent can return. It means the handoff specifies
+something, it is not built, and nothing anywhere is going to remember that.
+
+Then value findings, most severe first:
 
 ```
 <file:line> | <dimension> | spec: <handoff value> (<handoff source:line>) | actual: <code value>
@@ -47,8 +83,13 @@ One row per finding, most severe first:
 Then:
 
 ```
-MATCHED: <count> values verified correct
+PRESENT:      <count> of <total> specified elements
+WAIVED:       <count> (each must appear in guarantee-handoff-completeness)
+MATCHED:      <count> values verified correct
 UNVERIFIABLE: <values you could not check and why>
 ```
+
+Report the presence counts even when everything is fine. `PRESENT: 12 of 12` is the sentence that
+would have caught this; "fidelity audit clean" is the sentence that did not.
 
 Do not report a finding you have not read both sides of. "Probably wrong" is not a finding.
