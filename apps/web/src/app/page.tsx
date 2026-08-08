@@ -17,10 +17,20 @@ import { LibraryScreen } from '../components/LibraryScreen';
 export const dynamic = 'force-dynamic';
 
 /** screen-library — design/handoff/README.md:14. Replaces the M0 token-pipeline scaffold page. */
-export default function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string | string[] }>;
+}) {
+  const { q } = await searchParams;
+  // A repeated `?q=a&q=b` arrives as an array. Taking the first is arbitrary but total; passing an
+  // array through would reach `websearch_to_tsquery` as "a,b" and quietly search for something the
+  // user never typed.
+  const query = Array.isArray(q) ? q[0] : q;
+
   return (
     <AppShell>
-      <LibraryScreen />
+      <LibraryScreen query={query} />
     </AppShell>
   );
 }

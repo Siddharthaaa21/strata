@@ -92,6 +92,56 @@
   justify-content: space-between;
 }
 
+/*
+ * Sidebar search — Vault.dc.html:52.
+ *
+ * The prototype draws a static row (an icon and the word "Search…"), because a design tool has no
+ * form. The real thing is a GET form so a query is a URL, and the field carries the border and
+ * radius the prototype specifies rather than a browser default.
+ */
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-search-gap);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  padding: var(--space-search-padding);
+  color: var(--ink-search);
+  font-size: var(--text-nav);
+}
+
+.searchIcon {
+  flex: none;
+  line-height: 1;
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-nav);
+  color: var(--ink-body);
+}
+
+.searchInput::placeholder {
+  color: var(--ink-search);
+}
+
+.searchInput:focus {
+  outline: none;
+}
+
+/* The ring goes on the whole field, not the bare input, so it traces the bordered box the handoff
+   draws rather than a rectangle inside it. */
+.search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .navList {
   display: flex;
   flex-direction: column;

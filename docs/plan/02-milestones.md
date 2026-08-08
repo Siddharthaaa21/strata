@@ -128,7 +128,17 @@ user is unresolved** and belongs with the Import screen's real-data pass in M4.
       `findKnown`/`upsert`/`events.recent`. Not exploitable today — nothing mints a narrowed grant —
       but it must be complete before M7 issues the first one. Tracked in R2's open list.
 
-**Done when** the Library search box returns real ranked results. — **Met.**
+**Done when** the Library search box returns real ranked results. — **Met 2026-08-08, not on
+2026-08-02 when this line first said so.**
+
+That earlier "Met" was false, and the way it was false is worth keeping. The criterion names the
+**Library search box**; it was marked met on the strength of 13 passing storage tests. There was no
+search box. There had never been one — `git log -S` finds no search input in `apps/web` at any
+commit until today. `packages/storage` returned real ranked results, which is a different claim
+than the one written here, and nobody opened the page to notice.
+
+Now genuinely met: a GET form in the sidebar navigates to `/?q=`, the Server Component runs
+`docs.search`, and the results render ranked. Verified by using it, not by a test run — see D17.
 
 Carried out of M4, **partially closed 2026-08-02**: `docs.list` clamps to `MAX_RESULTS` (50), which
 is correct as an anti-exfiltration ceiling for an agent and wrong as a page size for a human.

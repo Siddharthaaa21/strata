@@ -31,6 +31,7 @@
   --ink-connector-desc: oklch(50% 0.02 75); /* connector row description — Vault.dc.html:127 */
   --ink-section-label: oklch(38% 0.02 75); /* "Recent imports" label — Vault.dc.html:135 */
   --ink-code: oklch(30% 0.02 75); /* reader code-block text — Vault.dc.html:160 */
+  --ink-search: oklch(45% 0.02 75); /* sidebar search field text + icon — Vault.dc.html:52 */
 
   /* Accent — overridable per instance; do not hardcode downstream */
   --accent: oklch(55% 0.23 300);
@@ -115,6 +116,8 @@
   --space-nav-item-padding: 9px 10px; /* Vault.dc.html:57 */
   --space-top-bar-padding: 14px 18px; /* Vault.dc.html:28 */
   --space-filter-row-gap: 8px; /* Vault.dc.html:93 */
+  --space-search-padding: 8px 10px; /* sidebar search field — Vault.dc.html:52 */
+  --space-search-gap: 8px; /* icon-to-input gap — Vault.dc.html:52 */
   --space-filter-pill-padding: 7px 15px; /* Vault.dc.html:95 */
   --space-header-gap: 26px; /* Vault.dc.html:87 */
   --space-subtitle-gap: 4px; /* Vault.dc.html:90 */

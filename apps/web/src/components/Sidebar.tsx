@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import styles from './Sidebar.module.css';
 
@@ -19,9 +19,17 @@ import styles from './Sidebar.module.css';
  * around will hit. Revoking agent access meanwhile is `npm run member -- remove` and
  * `npm run agent:create`, which do work.
  *
- * Deliberately excludes the handoff's search field, folders list, and user-profile footer — none
- * of those were requested for this build pass and none are backed by a `packages/core` type
- * (there is no `User`/profile contract). See strata-ui-builder DEVIATIONS.
+ * The search field is BACK (Vault.dc.html:52). It was deferred in M2 on the reasonable grounds that
+ * nothing backed it yet, and then never picked up when M4 built the search it was waiting for — so
+ * the Library shipped without the second half of its own stated purpose ("Browse/search all
+ * ingested docs", README:15) for five milestones. The deferral was recorded inside an
+ * already-checked milestone bullet, which is not a place anything gets read again.
+ *
+ * Still deliberately excluded: the folders list and the user-profile footer. The folder pills on
+ * the Library already provide folder filtering, so the sidebar list is a duplicate affordance
+ * rather than a missing capability; the profile footer needs a `User` contract that does not exist
+ * and whose handoff copy ("Priya Shah", "4 agents connected") is placeholder. Both are tracked as
+ * real items now rather than as a note in a closed bullet.
  */
 const NAV_ITEMS = [
   { label: 'Library', href: '/' },
@@ -32,6 +40,7 @@ const NAV_ITEMS = [
 export function Sidebar() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  const query = useSearchParams()?.get('q') ?? '';
 
   const brand = (logoTileClass: string | undefined) => (
     <div className={styles.brand}>
@@ -56,6 +65,31 @@ export function Sidebar() {
             ✕
           </button>
         </div>
+
+        {/*
+          Vault.dc.html:52. Absent since M2, when it was deferred because no `packages/core` type
+          backed it yet — true then, and never picked up again once M4 built the search it needed.
+
+          A plain GET form, not a controlled input: it navigates to `/?q=…`, so the SERVER runs the
+          ranked query across the whole vault. A client-side filter over the loaded page would have
+          searched one clamped page of 50 and reported "no results" for documents that are in
+          Strata — the same class of error as the doc count and the folder pills, and the worst of
+          the three, because the user would believe the answer.
+
+          It also works with JavaScript disabled and makes a search a real URL that can be linked
+          and reloaded, which a controlled input would have to reimplement.
+        */}
+        <form className={styles.search} action="/" method="get" role="search">
+          <span className={styles.searchIcon} aria-hidden="true">⌕</span>
+          <input
+            className={styles.searchInput}
+            type="search"
+            name="q"
+            defaultValue={query}
+            placeholder="Search…"
+            aria-label="Search documents"
+          />
+        </form>
 
         <div className={styles.navList}>
           {NAV_ITEMS.map((item) => {

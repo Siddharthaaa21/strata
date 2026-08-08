@@ -19,6 +19,7 @@ export function LibraryView({
   sources,
   total,
   folders: allFolders,
+  query = '',
 }: {
   docs: readonly DocListItem[];
   sources: readonly SourceListItem[];
@@ -26,7 +27,16 @@ export function LibraryView({
   total: number;
   /** Every folder in scope, queried separately so truncation cannot hide one. */
   folders: readonly string[];
+  /**
+   * The active search, already run on the SERVER against the whole vault.
+   *
+   * Present only so this component can describe what it is showing. It must never filter on this
+   * value — `docs` is already the ranked result set, and re-filtering here would narrow a
+   * whole-vault answer down to whatever also matched a client-side string compare.
+   */
+  query?: string;
 }) {
+  const searching = query !== '';
   const sourcesById = useMemo(
     () => new Map(sources.map((s) => [s.id, s])),
     [sources],
@@ -45,20 +55,42 @@ export function LibraryView({
   return (
     <div className={styles.screen}>
       <div>
-        <h1 className={`serif ${styles.title}`}>Library</h1>
+        <h1 className={`serif ${styles.title}`}>
+          {searching ? 'Search' : 'Library'}
+        </h1>
         <p className={styles.subtitle}>
-          {total === 0
-            ? 'No documents yet. Run `npm run ingest -- <folder>` to add some.'
-            : `${total} ${total === 1 ? 'doc' : 'docs'}${
-                connected.length ? ` from ${connected.join(', ')}` : ''
-              }.`}
+          {searching ? (
+            <>
+              {docs.length === 0
+                ? `Nothing matches “${query}”.`
+                : `${docs.length} ${docs.length === 1 ? 'result' : 'results'} for “${query}”, best first.`}
+              {/*
+                Named explicitly so an empty result is not read as an empty vault. "No results" on a
+                screen headed "Library" is the one message that could make someone conclude their
+                document was never imported — and the answer to that is one link away, not a support
+                conversation.
+              */}
+              <span className={styles.truncationNote}>
+                {' '}Searched all {total} {total === 1 ? 'document' : 'documents'} in scope.{' '}
+                <a className={styles.clearSearch} href="/">
+                  Clear search
+                </a>
+              </span>
+            </>
+          ) : total === 0 ? (
+            'No documents yet. Run `npm run ingest -- <folder>` to add some.'
+          ) : (
+            `${total} ${total === 1 ? 'doc' : 'docs'}${
+              connected.length ? ` from ${connected.join(', ')}` : ''
+            }.`
+          )}
           {/*
             Stated rather than hidden. The list is one clamped page, and until this screen has a
             pagination design — the handoff has none — the honest thing is to say which documents
             are on screen. Silently showing 50 of 312 under a heading that says "312 docs" is worse
             than either showing all of them or admitting the limit.
           */}
-          {docs.length < total && (
+          {!searching && docs.length < total && (
             <span className={styles.truncationNote}>
               {' '}Showing the {docs.length} most recently updated.
             </span>

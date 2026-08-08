@@ -531,3 +531,51 @@ binding is the one deliberate behaviour change with a user-visible edge: a membe
 signs in through a *second* provider with the same address is now refused rather than silently
 merged. That is the correct default — the alternative is the classic pre-hijack — but it is a
 support question the day someone hits it, and it is recorded here so the answer is not re-derived.
+
+---
+
+## D17 — The Library shipped for five milestones without search · 2026-08-08
+
+**What happened.** `design/handoff/README.md:15` states the Library's purpose: "Browse/**search**
+all ingested docs across sources and folders." `Vault.dc.html:52` draws the field. The application
+had no search box from M2 until today — `git log -S` confirms no search input existed in `apps/web`
+at any commit in between. Search itself was built in M4, tested against real Postgres, and reachable
+only by agents over MCP. No human could use it.
+
+**The chain, in four steps, none careless on its own:**
+
+1. **M2 omitted it, correctly.** No storage existed yet; nothing backed a search field. Deferring
+   was the right call.
+2. **The deferral was recorded somewhere nothing is read again** — a note inside an
+   already-checked milestone bullet (`02-milestones.md:61`) and a `DEVIATIONS` code comment. Not a
+   risk, not a carried-out item, not a task.
+3. **M4's completion criterion was marked Met when it was not.** The line read "Done when the
+   Library search box returns real ranked results." It was closed on 13 passing storage tests. The
+   criterion names a UI element; the evidence was a test suite. Nobody rendered the page.
+4. **The fidelity audit ran and was clean** — correctly. Its brief is to compare the implementation
+   to the handoff *value-by-value*. An element that does not exist has no values to disagree about,
+   so the audit was structurally incapable of finding the largest defect on the screen.
+
+**The decision, three parts:**
+
+- A `Done when` that names something user-visible is closed by **exercising it** — a screenshot of
+  the described behaviour — never by a green test suite. The browser tooling existed the whole time.
+- The fidelity auditor now runs a **presence pass before its value pass**, and reports
+  `PRESENT: n of m` even when clean. "Fidelity audit clean" is the sentence that missed this;
+  "PRESENT: 12 of 12" is the sentence that would not have.
+- **A deferral creates a tracked item.** If it is worth writing down, it is worth putting where
+  something reads it. Waived omissions now live in `guarantee-handoff-completeness`, with a reason
+  each, and anything absent that is not in that table is a finding.
+
+**The general lesson, and the reason this entry is long.** *Verification went where the tooling was,
+not where the risk was.* Authentication got five independent adversarial review rounds and turned up
+a real privilege escalation; there are 232 tests; every SQL statement was enumerated for tenancy
+leaks. All of that is checkable without a human looking at anything, so all of it got checked,
+repeatedly. The one question that required someone to open a browser — **is this the product?** —
+had no mechanism at all, so it went unasked for six milestones while every later milestone built on
+"Library: done."
+
+Rigour is not uniform just because it is intense. It pools where it is cheap.
+
+**Reversible?** The presence pass costs one enumeration per screen audit. The alternative is
+trusting a value diff to notice absence, which it demonstrably does not.
