@@ -579,3 +579,110 @@ Rigour is not uniform just because it is intense. It pools where it is cheap.
 
 **Reversible?** The presence pass costs one enumeration per screen audit. The alternative is
 trusting a value diff to notice absence, which it demonstrably does not.
+
+## D18 — The env var the server could read and the browser could not · 2026-08-09
+
+**Context.** The root `.env` is the single source of truth for the CLIs, the MCP server and the web
+app. `apps/web/src/lib/vault.ts` made that work by reading the file into `process.env` on first use.
+That is a *runtime* fix, and it is complete for everything that runs on the server.
+
+`NEXT_PUBLIC_*` does not run on the server. Next substitutes it into the client bundle **while the
+bundle is being built**, from `.env*` files it loads out of the directory it was started in —
+`apps/web`, which has none. So both public Supabase settings were present for every Server
+Component and absent from the one file that runs in a browser.
+
+**What that looked like.** Everything worked. `/` and `/import` redirected to `/login` correctly,
+`/login` rendered correctly, `/auth/dev-login` correctly 404'd with the local issuer off, the JWKS
+endpoint returned the project's ES256 key, membership and grants were in place. The failure was one
+click deep: `supabaseBrowser()` threw `NEXT_PUBLIC_SUPABASE_URL … are not set`, the button stuck on
+"Sending…", and no request ever left the page.
+
+This is D17's lesson arriving a second time, one day later, in a new disguise. The runtime workaround
+did not merely fail to cover the build-time case — **it concealed it**, by making every observable
+server behaviour correct. A missing variable that broke everything would have been found in seconds.
+
+**The decision.** `next.config.ts` calls `clientEnv()` from `apps/web/src/lib/root-env.ts`, which
+reads the root `.env` at config time and returns values for Next's `env`.
+
+- **An allowlist of literal names, never a predicate over the file's keys.** `env` inlines what it
+  is given into a public artifact, and the same file holds `DATABASE_URL` and `STRATA_CLI_TOKEN`.
+  Even `startsWith('NEXT_PUBLIC_')` is unsafe: it ships a mislabelled
+  `NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY` to every browser and looks deliberate in the diff. Adding
+  a name is an act with a reviewer; matching a pattern is a decision nobody makes again. Tested
+  against a fixture of secret-shaped names, not by asserting the list equals itself.
+- **Process first, file second.** On a platform the values come from the environment and there is no
+  file; file-first would let a stale local value beat the configured one wherever both exist.
+- **Absent stays absent.** A missing name is omitted, not defaulted to `''`, so it presents as
+  "not configured" and not as a signature failure.
+
+**Rejected: symlinking `apps/web/.env` to the root file.** One command, no code. It is invisible in
+a diff, does not survive a clone, and aims a file of secrets at a directory the framework serves
+from. A dozen lines that say what they do beat a filesystem trick nobody can see.
+
+**How it was caught, and the part worth keeping.** By submitting the sign-in form with a
+deliberately malformed address (`probe@`) before spending a real one. Supabase rejects the format
+without sending mail, so the probe distinguishes "env missing" from "env present" for free — which
+matters on the free tier, where the built-in mailer allows **two emails per hour**. The general
+move: when the confirming action is rate-limited, find the input that exercises the same path and
+fails early.
+
+**Reversible?** Yes, and cheaply — but note that the check that would have caught this is not a unit
+test. It is loading the page and pressing the button.
+
+## D19 — The sign-in that failed in four milliseconds · 2026-08-09
+
+**Context.** First real magic link, first real sign-in. The link was clicked; the browser landed
+back on `/login` with no message. The only trace anywhere:
+
+```
+GET /auth/callback?code=9d5e961e-… 307 in 4ms (application-code: 3ms)
+GET /login 200
+```
+
+**Four milliseconds is the whole diagnosis.** A PKCE code exchange is a network round trip to the
+provider — two hundred milliseconds at best. This failed locally, before a packet left the machine,
+which narrows it to one thing: the `code_verifier` cookie was not in the request. `signInWithOtp`
+stores that verifier in the browser that asks for the link; the browser that OPENS the link has to
+be the same one, and a mail client's in-app browser is not. Confirmed by reproducing it with a
+fabricated code — Supabase's own text is *"PKCE code verifier not found in storage… initiated in a
+different browser or device."*
+
+**The defect was not the cookie. It was that the codebase already knew and did not say.**
+`exchangeCodeForSession` returns a fully descriptive error and the route discarded it:
+
+```ts
+const { error } = await supabase.auth.exchangeCodeForSession(code);
+if (error) return NextResponse.redirect(new URL('/login', url.origin));
+```
+
+That line was written for a good reason — the wire must not distinguish authentication outcomes
+(ADR 0006 §5) — and it over-applied it. **A protocol failure is not an authorization answer.**
+"Your link could not complete an exchange" reveals nothing about who is a member; it is not the
+membership oracle the rule exists to prevent. Collapsing it to silence bought no security and cost
+the entire diagnosis, for the user *and* for us.
+
+**The decision.**
+
+- The callback **logs the provider's reason**, including whether a `-code-verifier` cookie was
+  present — the single fact that separates the common cause from every other one. Server-side only,
+  the same split `AuthError.kind` and `NotSignedIn.reason` already use.
+- It redirects with a coarse `?reason=` describing the LINK: `browser`, `expired`, `link`.
+  Membership stays silent, permanently, and there is no reason code for it.
+- It handles the provider's own error redirect (`error_code=otp_expired`), which arrives with no
+  `code` at all and was previously indistinguishable from an empty visit.
+- `/login` became a Server Component around the form so the message resolves during render.
+  Reading `window.location` in an effect and calling `setState` is a cascading render the lint rule
+  rejects; `useSearchParams` in a prerendered client component needs a Suspense boundary. Resolving
+  on the server avoids both, and keeps the wording next to the argument for it.
+- Some provider failures arrive in the URL **fragment**, which no server ever sees. The client
+  rewrites those as the query form — a navigation, not a second copy of the state.
+
+**The pattern, since this is the third entry about it.** D17: a criterion marked met without anyone
+opening the page. D18: a variable the server could read and the browser could not. Now: an error the
+code held in its hand and dropped. Each time the machinery was correct and the *observability of a
+human-facing path* was the thing missing. Errors that reach a person are a feature with a spec, not
+exhaust.
+
+**Reversible?** The logging, trivially. The `?reason=` vocabulary is public copy — adding a code that
+distinguishes members from non-members would undo ADR 0006 §5, so the three that exist are the three
+there should be.

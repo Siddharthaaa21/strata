@@ -90,6 +90,24 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<the anon key>
 > **Never the `service_role` key.** It bypasses every check in this codebase. The anon key is public
 > by design — it ships to the browser and is meant to.
 
+**Restart the dev server after editing these two.** Unlike everything else in `.env`, they are not
+read at runtime: `next.config.ts` reads them at *config* time and Next substitutes them into the
+client bundle as literals (D18). A running server holds the values it started with, so an edit does
+nothing until it restarts — and the symptom is a sign-in button that hangs on "Sending…".
+
+**Open the emailed link in the browser you requested it from.** The sign-in uses PKCE: requesting a
+link stores a one-time verifier in that browser, and the callback needs it. A link opened anywhere
+else — a mail app's built-in browser, a different browser, another device — cannot complete, and
+fails in a few milliseconds without ever contacting Supabase. If your mail client opens links
+somewhere unhelpful, copy the link and paste it into the right browser. Since D19 the app says so
+instead of looping silently; `[auth/callback]` lines in the server log name the reason.
+
+**On the free plan, the built-in mailer sends two emails per hour.** That is enough to sign in and
+not much more, so get the configuration right before spending one. A cheap way to test the whole
+browser → Supabase path without sending anything: submit the sign-in form with a malformed address
+such as `probe@`. Supabase rejects the format before it sends, so `Unable to validate email address`
+appearing under the form proves the key, the URL and the network path are all good.
+
 **One optional variable, and only for older projects.** Current Supabase projects sign tokens with
 asymmetric keys, which this app fetches from the project's public JWKS endpoint automatically —
 nothing to configure. If your project uses the legacy shared secret (Project Settings → API → JWT
