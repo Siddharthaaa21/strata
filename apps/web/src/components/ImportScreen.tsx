@@ -29,7 +29,13 @@ export async function ImportScreen() {
     const live = bySourceId.get(c.id);
     return {
       id: c.id,
-      kind: c.kind,
+      // The LIVE kind when a real source occupies this slot, falling back to the placeholder's only
+      // when nothing is connected. Taking `name` and `status` from the live row while keeping the
+      // slot's kind meant the icon and tint described the slot rather than the source — so a
+      // markdown source occupying the `src-claude` id rendered with Claude's badge and colours and
+      // read, to anyone glancing at the screen, as a connected Claude account. The icon is the
+      // fastest thing on the row to read, which makes it the worst thing to have lying.
+      kind: live?.kind ?? c.kind,
       name: live?.name ?? c.name,
       description: live?.description ?? c.description,
       status: live?.status ?? 'disconnected',
