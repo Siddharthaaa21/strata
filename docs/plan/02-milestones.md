@@ -174,6 +174,10 @@ stand-in for a real one.
 - [x] Normalizer, dedupe, `ImportEvent` emission including failures — designed in ADR 0003
 - [x] Wire the adapter to `packages/storage` persist — `persist.ts`, plus a 7-test end-to-end
       suite covering the whole loop: files -> scan -> dedupe -> persist -> ranked search
+- [x] **Renames, moves, and deletes** (R5, D20). A move keeps its `DocId` and re-derives every
+      path-derived field; a vanished file is reported on every run and removed only under
+      `--prune`; deletion is a tombstone, so the audit trail survives and a returning file
+      reclaims its original document. Nine tests, five guards mutation-verified, proven live.
 - [ ] Claude and Cursor adapters
 - [ ] GitHub adapter — ships **not connected** by default
 - [ ] Fixture-based tests per adapter; no live network in tests — ADR 0003 specifies an injected
@@ -198,7 +202,7 @@ stand-in for a real one.
       with a real MCP client over stdio. `.mcp.json` wires it into Claude Code with no secrets.
 - [x] `packages/auth` is no longer a stub. `localDevScope` is deleted (M7 increment 2); every
       caller presents a credential that is verified against the database. Original entry follows.
-- [ ] `packages/auth` is a development stub — `localDevScope` is not authentication. Real
+- [x] `packages/auth` is a development stub — `localDevScope` is not authentication. Real
       per-connection principals are M7 (R7)
 - [x] Red-team pass on injection — 9 hostile documents through the real route (`injection.test.ts`)
 - [x] `strata-verifier` pass focused on tenancy leaks and injection — ran 2026-08-02, three

@@ -212,6 +212,22 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
 -- empty) and fails on the one database that matters.
 ALTER TABLE import_events ADD COLUMN IF NOT EXISTS external_id text;
 
+-- A tombstone, not a DELETE (R5). When a file disappears from a source, the document stops being
+-- visible but the row stays.
+--
+-- Three reasons it is soft. import_events.doc_id and access_log.doc_ids both point here, so a hard
+-- delete either breaks the audit trail or cascades through it — and an audit trail that loses rows
+-- when the thing they describe is removed is worst exactly when it is needed. Second, a prune
+-- driven by a mis-scoped scan is recoverable by clearing one column instead of by re-importing.
+-- Third, re-adding a deleted file resurrects its original DocId rather than minting a second one,
+-- which is the whole reason identity is stable in the first place.
+--
+-- Every read path filters on it. findKnown deliberately does NOT — see the method.
+ALTER TABLE docs ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+
+CREATE INDEX IF NOT EXISTS docs_live_by_source
+  ON docs (workspace_id, source_id) WHERE deleted_at IS NULL;
+
 -- Who read what (ADR 0005 section 5). Promised when the fencing strategy was designed and not built
 -- until now; it is the compensating control for that ADR's own admission that prevention is
 -- incomplete. An injection that succeeds is discovered here or not at all.
@@ -323,7 +339,40 @@ export interface DocStore {
     scope: Scope,
     sourceId: SourceId,
     externalId: string,
-  ): Promise<{ readonly docId: DocId; readonly contentHash: string } | undefined>;
+  ): Promise<
+    | {
+        readonly docId: DocId;
+        readonly contentHash: string;
+        /** Set when the document is tombstoned. Present so the caller can force a restore (R5). */
+        readonly deletedAt?: string;
+      }
+    | undefined
+  >;
+  /**
+   * Identity inventory for one source: every live document's id, path, and content hash.
+   *
+   * Ingest needs it to reason about the files a scan did NOT see — a stored path with no file is
+   * either a rename (some new path has the same content hash) or a deletion. `findKnown` answers
+   * per-path and so can never see either.
+   */
+  listKnown(
+    scope: Scope,
+    sourceId: SourceId,
+  ): Promise<readonly { readonly docId: DocId; readonly externalId: string; readonly contentHash: string }[]>;
+  /**
+   * Moves a document to a new path, keeping its `DocId` (R5).
+   *
+   * Throws bare `NotFound` for unknown and out-of-grant alike, like every other keyed operation.
+   */
+  relocate(scope: Scope, docId: DocId, externalId: string): Promise<void>;
+  /**
+   * Tombstones documents. Returns how many rows this call actually changed.
+   *
+   * The count is a return value rather than a void, because "I deleted 40 documents" printed by a
+   * CLI must be what the database did, not what the caller intended — the same defect `removeMember`
+   * had (D16).
+   */
+  softDelete(scope: Scope, docIds: readonly DocId[], at: string): Promise<number>;
   search(scope: Scope, query: string, limit?: number): Promise<readonly DocSummary[]>;
   /**
    * Browsing, not searching: the Library shows everything in scope, newest first, with no query.
@@ -397,7 +446,12 @@ export function createDocStore(db: SqlDriver): DocStore {
              tags         = EXCLUDED.tags,
              tags_prov    = EXCLUDED.tags_prov,
              updated_at   = EXCLUDED.updated_at,
-             search_vector = EXCLUDED.search_vector
+             search_vector = EXCLUDED.search_vector,
+             -- Writing a document undeletes it. A file that comes back is the same document, with
+             -- the same id and the same history — resurrecting it here means no caller has to
+             -- remember to, and forgetting would leave a row that ingest reports as written and
+             -- every read path hides.
+             deleted_at   = NULL
            RETURNING id
          )
          INSERT INTO doc_bodies (workspace_id, doc_id, body)
@@ -437,6 +491,7 @@ export function createDocStore(db: SqlDriver): DocStore {
       const { rows } = await db.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM docs
           WHERE workspace_id = $1
+            AND deleted_at IS NULL
             AND ($2::text[] IS NULL OR source_id = ANY($2::text[]))
             AND ($3::text IS NULL OR folder = $3::text)`,
         [workspaceId, sourceIds === undefined ? null : [...sourceIds], options.folder ?? null],
@@ -449,6 +504,7 @@ export function createDocStore(db: SqlDriver): DocStore {
       const { rows } = await db.query<{ folder: string }>(
         `SELECT DISTINCT folder FROM docs
           WHERE workspace_id = $1
+            AND deleted_at IS NULL
             AND ($2::text[] IS NULL OR source_id = ANY($2::text[]))
           ORDER BY folder`,
         [workspaceId, sourceIds === undefined ? null : [...sourceIds]],
@@ -463,13 +519,110 @@ export function createDocStore(db: SqlDriver): DocStore {
       // whether that exact content sits in a source you are not allowed to read.
       if (!isSourceInGrant(scope, sourceId)) return undefined;
       const { workspaceId } = scopeFilter(scope);
-      const { rows } = await db.query<{ id: string; content_hash: string }>(
-        `SELECT id, content_hash FROM docs
+      // DELIBERATELY sees tombstoned rows — the only read here that does.
+      //
+      // This answers "what does storage already know at this identity", and a deleted document is
+      // still known. Filtering it out would make a restored file look new: a second DocId minted
+      // for the same path, the original row still tombstoned underneath it, and the identity
+      // constraint then rejecting the write outright. Callers are told via `deletedAt` so the
+      // pipeline can force a rewrite rather than deciding `unchanged` and leaving it invisible.
+      const { rows } = await db.query<{ id: string; content_hash: string; deleted_at: Date | string | null }>(
+        `SELECT id, content_hash, deleted_at FROM docs
           WHERE workspace_id = $1 AND source_id = $2 AND external_id = $3`,
         [workspaceId, sourceId, externalId],
       );
       const row = rows[0];
-      return row === undefined ? undefined : { docId: row.id as DocId, contentHash: row.content_hash };
+      if (row === undefined) return undefined;
+      return {
+        docId: row.id as DocId,
+        contentHash: row.content_hash,
+        ...(row.deleted_at === null ? {} : { deletedAt: new Date(row.deleted_at).toISOString() }),
+      };
+    },
+
+    /**
+     * Every live document in one source, as identity only — id, path, content hash.
+     *
+     * What ingest needs to answer the two questions `findKnown` cannot, because both are about the
+     * documents a scan did NOT encounter: which stored document is this file's previous path
+     * (a rename), and which stored documents no longer have a file at all (a delete).
+     *
+     * Returns no title, excerpt, or body. It is an identity inventory, and a method that hands back
+     * content for a whole source is a far larger thing to have to reason about than one that hands
+     * back hashes.
+     */
+    async listKnown(scope, sourceId) {
+      if (!isSourceInGrant(scope, sourceId)) return [];
+      const { workspaceId } = scopeFilter(scope);
+      const { rows } = await db.query<{ id: string; external_id: string; content_hash: string }>(
+        `SELECT id, external_id, content_hash FROM docs
+          WHERE workspace_id = $1 AND source_id = $2 AND deleted_at IS NULL
+          ORDER BY external_id`,
+        [workspaceId, sourceId],
+      );
+      return rows.map((r) => ({
+        docId: r.id as DocId,
+        externalId: r.external_id,
+        contentHash: r.content_hash,
+      }));
+    },
+
+    /**
+     * Moves a document to a new path, keeping its id.
+     *
+     * The whole point of R5: without this a rename is a delete plus a create, and every `DocId` the
+     * rest of the system has recorded — import events, access log entries, anything a user or an
+     * agent has referenced — points at a document that no longer exists.
+     *
+     * A dedicated statement rather than a flag on `upsert`, because the two conflict differently.
+     * `upsert` resolves on `(workspace_id, source_id, external_id)`; a rename has no row at the new
+     * path, so it would INSERT and collide on the PRIMARY KEY instead — a raw constraint error, on
+     * the path where the operator is least able to interpret one.
+     *
+     * `updated_at` is untouched. A file that moved has not been edited, and bumping it would push
+     * every renamed document to the top of a Library ordered by recency, which is a lie about what
+     * changed and it destroys the recency tiebreaker for ranking (ADR 0004).
+     */
+    async relocate(scope, docId, externalId) {
+      const { workspaceId } = scopeFilter(scope);
+      const { rows } = await db.query<{ id: string }>(
+        // The source predicate is the grant check: `scopeFilter`'s sourceIds is the narrowing, and
+        // a NULL array means unnarrowed. Expressed as a WHERE clause rather than an early return so
+        // an out-of-grant docId is simply not found — same shape as every other keyed read.
+        `UPDATE docs SET external_id = $3
+          WHERE workspace_id = $1 AND id = $2
+            AND ($4::text[] IS NULL OR source_id = ANY($4::text[]))
+          RETURNING id`,
+        [
+          workspaceId,
+          docId,
+          externalId,
+          scopeFilter(scope).sourceIds === undefined ? null : [...scopeFilter(scope).sourceIds!],
+        ],
+      );
+      if (rows.length === 0) throw new Error('NotFound');
+    },
+
+    /**
+     * Tombstones documents whose files are gone.
+     *
+     * Soft, for the reasons on the `deleted_at` migration: the audit trail points here, a mis-scoped
+     * prune stays recoverable, and a file that returns keeps its original id.
+     *
+     * Idempotent — `deleted_at IS NULL` in the predicate means re-pruning does not restamp the
+     * timestamp, so "when did this leave the vault" survives a second run.
+     */
+    async softDelete(scope, docIds, at) {
+      if (docIds.length === 0) return 0;
+      const { workspaceId, sourceIds } = scopeFilter(scope);
+      const { rows } = await db.query<{ id: string }>(
+        `UPDATE docs SET deleted_at = $3
+          WHERE workspace_id = $1 AND id = ANY($2::text[]) AND deleted_at IS NULL
+            AND ($4::text[] IS NULL OR source_id = ANY($4::text[]))
+          RETURNING id`,
+        [workspaceId, [...docIds], at, sourceIds === undefined ? null : [...sourceIds]],
+      );
+      return rows.length;
     },
 
     /**
@@ -519,6 +672,7 @@ export function createDocStore(db: SqlDriver): DocStore {
          ), strict AS (
            SELECT 1 FROM docs, q
             WHERE workspace_id = $1
+              AND deleted_at IS NULL
               AND ($3::text[] IS NULL OR source_id = ANY($3::text[]))
               AND search_vector @@ q.strict_q
             LIMIT 1
@@ -533,6 +687,7 @@ export function createDocStore(db: SqlDriver): DocStore {
                 ts_rank_cd(d.search_vector, c.tsq) AS rank
            FROM docs d, chosen c
           WHERE d.workspace_id = $1
+            AND d.deleted_at IS NULL
             AND ($3::text[] IS NULL OR d.source_id = ANY($3::text[]))
             AND d.search_vector @@ c.tsq
           ORDER BY rank DESC, d.updated_at DESC
@@ -569,6 +724,7 @@ export function createDocStore(db: SqlDriver): DocStore {
         `SELECT id, source_id, title, excerpt, folder, tags, updated_at
            FROM docs
           WHERE workspace_id = $1
+            AND deleted_at IS NULL
             AND ($2::text[] IS NULL OR source_id = ANY($2::text[]))
             AND ($3::text IS NULL OR folder = $3::text)
           ORDER BY updated_at DESC
@@ -608,7 +764,7 @@ export function createDocStore(db: SqlDriver): DocStore {
                 d.created_at, d.updated_at, b.body
            FROM docs d
            JOIN doc_bodies b ON b.workspace_id = d.workspace_id AND b.doc_id = d.id
-          WHERE d.workspace_id = $1 AND d.id = $2`,
+          WHERE d.workspace_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
         [filter.workspaceId, id],
       );
 

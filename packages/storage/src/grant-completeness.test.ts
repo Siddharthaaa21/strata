@@ -139,6 +139,20 @@ const CALLS: Record<
     // discloses that an out-of-grant document exists just as surely as returning it would.
     count: { expect: 'zero', call: (s, sc) => s.docs.count(sc) },
     folders: { expect: 'zero', call: (s, sc) => s.docs.folders(sc) },
+    // R5's three. `listKnown` is the sharpest of them: it returns content hashes for a whole
+    // source, so an unnarrowed version is a bulk content-confirmation oracle — hash a corpus you
+    // suspect someone holds, ask once, and learn which of it is in a source you cannot read.
+    listKnown: { expect: 'zero', call: (s, sc) => s.docs.listKnown(sc, SECRET) },
+    relocate: {
+      expect: 'throws',
+      call: (s, sc) => s.docs.relocate(sc, 'doc-secret' as DocId, 'notes/moved-by-a-stranger.md'),
+    },
+    // Returns a count of rows changed, so the aggregate assertion is the right one: a narrowed
+    // grant reporting 1 has both deleted a document it cannot read and told the caller it existed.
+    softDelete: {
+      expect: 'zero',
+      call: (s, sc) => s.docs.softDelete(sc, ['doc-secret' as DocId], '2026-08-09T00:00:00.000Z'),
+    },
   },
   sources: {
     upsert: {

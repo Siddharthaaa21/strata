@@ -73,6 +73,33 @@ export async function persistDecisions(
     }
 
     const { pending } = decision;
+
+    // A move is `relocate` THEN the ordinary upsert, and it needs both.
+    //
+    // `relocate` moves the row to the new path keeping its id — the whole point of R5, since every
+    // DocId already recorded in import_events, in the access log, or by an agent must keep pointing
+    // at the same document. It cannot be done by `upsert` alone: `upsert` resolves conflicts on
+    // (workspace, source, externalId), and a rename's new path has no row, so it would INSERT and
+    // collide on the PRIMARY KEY — a raw constraint error exactly where an operator can least
+    // interpret one.
+    //
+    // But relocating is not enough on its own, and assuming it was is a bug this file shipped with
+    // for about an hour. `folder`, `tags`, and the search vector are all DERIVED FROM THE PATH. A
+    // document moved from `Architecture/` to `Design/` kept `folder: 'Architecture'` — so the
+    // Library's filter pills, which are built from that column, offered a directory that no longer
+    // existed and hid the document under it. Byte-identical content does not mean nothing changed.
+    //
+    // Falling through to the upsert fixes every derived field at once, and it does so through the
+    // same single-statement atomic write everything else uses. The row now sits at the new path, so
+    // the upsert conflicts there and updates in place, returning the id it already had.
+    if (decision.outcome === 'renamed') {
+      try {
+        await store.relocate(scope, decision.docId, pending.externalId);
+      } catch {
+        failed.push({ externalId: pending.externalId, code: 'persist-failed' });
+        continue;
+      }
+    }
     try {
       const storedId = await store.upsert(scope, {
         id: decision.docId,
@@ -118,10 +145,27 @@ export async function persistIngest(
   scope: Scope,
   store: DocStore,
   result: IngestResult,
-): Promise<IngestResult & PersistResult> {
+  now: string = new Date().toISOString(),
+): Promise<IngestResult & PersistResult & { readonly deleted: number }> {
   const persisted = await persistDecisions(scope, store, result.decisions);
+
+  // Tombstones, applied after the writes.
+  //
+  // Order matters and this is the safe one. A rename is a delete of the old path plus a write at
+  // the new one; doing deletions first would tombstone a document that the relocate in the same run
+  // is about to move — and `runIngest` already excludes moved-from paths, so this is belt and
+  // braces rather than the primary guard. Doing them last also means a crash mid-run leaves extra
+  // documents rather than missing ones, which is the recoverable direction.
+  // `result.prune`, not `result.deletions.length`. The list is a proposal that is always computed;
+  // the flag is the authorization. Acting on the list alone would turn every ordinary ingest of a
+  // subfolder into a mass deletion — the exact failure the opt-in exists to prevent.
+  const deleted =
+    result.prune && result.deletions.length > 0
+      ? await store.softDelete(scope, result.deletions.map((d) => d.docId), now)
+      : 0;
+
   if (persisted.reconciled.size === 0 && persisted.failed.length === 0) {
-    return { ...result, ...persisted };
+    return { ...result, ...persisted, deleted };
   }
 
   const failedIds = new Set(persisted.failed.map((f) => f.externalId));
@@ -168,5 +212,5 @@ export async function persistIngest(
     counts.failed += 1;
   }
 
-  return { ...result, decisions, events, counts, ...persisted };
+  return { ...result, decisions, events, counts, ...persisted, deleted };
 }

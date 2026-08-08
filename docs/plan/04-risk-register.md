@@ -237,11 +237,22 @@ pipeline instead of co-developing with it.
 committing to M5's scope.
 
 **Update:** the local Markdown adapter's fetch/normalize/dedupe design is done (ADR 0003,
-`adapter-markdown` node) — storage-free by construction, so it doesn't wait on M4. It surfaced a
-new open item: **renames, moves, and deletes are unhandled.** Identity is the relative file path,
-so a rename is currently a delete-plus-create (the old `DocId` and anything attached to it is
-lost); a deleted file has no tombstone. The deletion half additionally blocks on `svc-storage`
-existing at all.
+`adapter-markdown` node) — storage-free by construction, so it doesn't wait on M4.
+
+**Renames, moves, and deletes: CLOSED 2026-08-09 (D20).** This was the open item, and it was
+corrupting data on every re-ingest of a reorganised folder, not hypothetically. A rename was a
+delete-plus-create — the old `DocId`, and every `import_events` row, access-log entry, and agent
+reference pointing at it, orphaned while the document appeared twice. A deleted file had no
+tombstone, so the vault only ever grew.
+
+Now: a moved file is matched by content hash and keeps its `DocId`; a vanished file is **reported on
+every run and deleted only under `--prune`**; deletion is a tombstone, so the audit trail survives
+and a file that returns resurrects its original document. The matching rule is deliberately timid —
+one unseen document and one arriving file must share a hash, or nothing is matched — because a wrong
+match is worse than the bug. Nine tests, all five guards mutation-verified, proven live end to end.
+
+**Still open under R5:** whether Claude and Cursor exports are accessible at all without scraping.
+Verify before committing to adapter scope — the answer may be "GitHub only."
 
 ---
 
