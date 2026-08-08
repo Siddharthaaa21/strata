@@ -64,6 +64,57 @@ Expected output ends with `Database ready.`
 If a check fails, the message names which one. `--check` re-runs the verification without
 re-applying DDL.
 
+### 4. Enable Supabase Auth and add its keys — 10 minutes
+
+This is the front door. Until it is configured, **every page throws**, deliberately: there is no
+unauthenticated fallback and no development stub, because a web app that quietly drops to an
+open mode when a variable is unset is one misconfigured deploy away from serving the whole vault.
+
+In the Supabase dashboard:
+
+1. **Authentication → Providers → Email.** Enable it. Turn **"Confirm email" ON** — the allowlist
+   matches on email address, so an unverified address means anyone can claim a colleague's. The
+   verifier refuses unverified tokens regardless (see `allowUnverifiedEmail`), so leaving this off
+   just means nobody can sign in.
+2. **Authentication → URL Configuration.** Add redirect URLs:
+   `http://localhost:3000/auth/callback` and, once deployed, `https://<your-app>/auth/callback`.
+3. **Project Settings → API.** Copy the **Project URL** and the **anon / publishable** key.
+
+Add to `.env`:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<the anon key>
+```
+
+> **Never the `service_role` key.** It bypasses every check in this codebase. The anon key is public
+> by design — it ships to the browser and is meant to.
+
+**One optional variable, and only for older projects.** Current Supabase projects sign tokens with
+asymmetric keys, which this app fetches from the project's public JWKS endpoint automatically —
+nothing to configure. If your project uses the legacy shared secret (Project Settings → API → JWT
+Settings shows a **JWT Secret**), add it:
+
+```
+SUPABASE_JWT_SECRET=<the JWT secret>
+```
+
+Setting it switches verification to HS256. Unlike the anon key this one **is** a secret: it signs
+tokens, so anyone holding it can mint a session as anybody.
+
+### 5. Add yourself to the allowlist
+
+The allowlist is the invite. A valid Google or email account is not access — membership is, and it
+is ours to decide rather than the provider's.
+
+```bash
+npm run member -- add you@example.com
+```
+
+Then `npm run dev`, sign in, and follow the emailed link. Your principal and grant are created on
+first successful sign-in. Add teammates the same way; `npm run member -- list` shows who has
+actually signed in versus who is merely invited.
+
 ---
 
 ## What each task unblocks

@@ -12,10 +12,13 @@ import 'server-only';
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import pg from 'pg';
-import { localDevScope } from '@strata/auth';
+import { AuthError, createAuthenticator } from '@strata/auth';
 import type { Scope, WorkspaceId } from '@strata/core';
 import {
+  createAuthStore,
   createDocStore,
   createEventStore,
   createSourceStore,
@@ -25,6 +28,7 @@ import {
   type EventStore,
   type SourceStore,
 } from '@strata/storage';
+import { claimsFromCookies, supabaseSettings } from './session.ts';
 
 /**
  * Next loads `.env` from the app directory; ours lives at the monorepo root so the CLI scripts and
@@ -97,26 +101,86 @@ export interface Vault {
 }
 
 /**
+ * Thrown when the caller has no usable session.
+ *
+ * A distinct type because the page's response is a redirect, not an error page, and catching
+ * `Error` broadly to decide that would also swallow real failures — turning a database outage into
+ * a login prompt, which is the single most confusing thing this app could do.
+ */
+export class NotSignedIn extends Error {
+  /** For our logs only. Every value produces the same redirect; see ADR 0006 §5. */
+  readonly reason: string;
+
+  constructor(reason: string) {
+    super(`not signed in: ${reason}`);
+    this.name = 'NotSignedIn';
+    this.reason = reason;
+  }
+}
+
+/**
  * Call per request, never module-scope.
  *
  * The `Scope` must not outlive a request — a cached one is a `Grant` revocation that silently does
- * not take effect. Today it comes from `localDevScope`, which is a labelled development stub and
- * NOT authentication (R7/M7); when real auth lands, only this function changes.
+ * not take effect. It is now minted from the caller's REAL session through the real code path:
+ * cookie -> verified claims -> membership -> `Scope`. `localDevScope` is no longer reachable from
+ * the web app, which was the point of increment 2. A development stub that mints authority is a
+ * second path, and a second path is one nobody tests until it is the one running.
+ *
+ * Async because verification may need the provider's public keys. Every caller was already async.
  */
-export function vault(): Vault {
+export async function vault(): Promise<Vault> {
   loadRootEnv();
   const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId | undefined;
   if (!workspaceId) {
-    throw new Error('STRATA_WORKSPACE_ID is not set. See .env.example.');
+    throw new Error('STRATA_WORKSPACE_ID is not set. See docs/SETUP.md.');
   }
 
+  const settings = supabaseSettings();
+  const jar = await cookies();
+  const asMap = new Map(jar.getAll().map((c) => [c.name, c.value]));
+
+  const claims = await claimsFromCookies(asMap, settings);
+  if (claims === undefined) throw new NotSignedIn('no valid session cookie');
+
   const db = fromPoolLike(pool());
+  const auth = createAuthenticator(createAuthStore(db));
+
+  let scope: Scope;
+  try {
+    // Membership, not the provider, decides whether this person gets a workspace. An authenticated
+    // stranger is still a stranger, and being absent from the allowlist is the ordinary case.
+    scope = await auth.scopeFromSession(workspaceId, claims);
+  } catch (e) {
+    throw new NotSignedIn(e instanceof AuthError ? e.kind : 'unknown');
+  }
+
   return {
     docs: createDocStore(db),
     sources: createSourceStore(db),
     events: createEventStore(db),
-    scope: localDevScope({ workspaceId }),
+    scope,
   };
+}
+
+/**
+ * `vault()`, but "not signed in" becomes a redirect instead of an exception.
+ *
+ * Every screen wants exactly this, so it is one function rather than a try/catch each page has to
+ * remember. `vault()` stays redirect-free underneath so it can be reasoned about — and tested —
+ * without a router.
+ *
+ * Only `NotSignedIn` is converted. A database outage must stay an error: rendering a login page
+ * because Postgres is unreachable would send everyone to re-authenticate, which fixes nothing and
+ * hides the actual failure behind the most reassuring screen in the app.
+ */
+export async function requireVault(): Promise<Vault> {
+  try {
+    return await vault();
+  } catch (e) {
+    if (e instanceof NotSignedIn) redirect('/login');
+    throw e;
+  }
 }
 
 /** What a card needs. Deliberately no workspaceId, no body — same projection the MCP tools use. */
@@ -146,7 +210,7 @@ export async function loadLibrary(): Promise<{
   /** Every folder in scope, not just those represented in the page above. */
   folders: string[];
 }> {
-  const { docs, sources, scope } = vault();
+  const { docs, sources, scope } = await requireVault();
   // Count and folders are queried separately and deliberately. `list` is clamped to MAX_RESULTS, so
   // deriving either from its result describes the page rather than the vault — which is how the
   // Library came to report "50 docs" for a 312-document workspace and to hide any folder whose
@@ -198,7 +262,7 @@ export async function loadImport(): Promise<{
   sources: SourceListItem[];
   recent: RecentImport[];
 }> {
-  const { sources, events, docs, scope } = vault();
+  const { sources, events, docs, scope } = await requireVault();
   const [srcs, evts] = await Promise.all([sources.list(scope), events.recent(scope, 20)]);
 
   const titles = new Map((await docs.list(scope, { limit: 50 })).map((d) => [d.id, d.title]));
