@@ -20,6 +20,11 @@ import 'server-only';
 
 import { verifySessionToken, SessionError, type SessionClaims, type SessionVerifierConfig } from '@strata/auth';
 import { accessTokenFromCookies } from './session-cookie.ts';
+import { LOCAL_COOKIE, LOCAL_ISSUER, localIssuerAllowed, localIssuerSecret } from './local-issuer.ts';
+
+// Re-exported so callers have one import for "the session layer" while the guard itself stays in a
+// file `node --test` can load. See local-issuer.ts for why that separation exists.
+export { LOCAL_COOKIE, LOCAL_ISSUER, localIssuerAllowed, localIssuerSecret };
 
 /**
  * How long a fetched JWKS is trusted before refetching.
@@ -37,6 +42,7 @@ export interface SupabaseSettings {
   readonly issuer: string;
   readonly jwtSecret?: string;
 }
+
 
 /**
  * Reads configuration, or explains exactly what is missing.
@@ -129,10 +135,37 @@ async function verifierConfig(
  */
 export async function claimsFromCookies(
   cookies: ReadonlyMap<string, string>,
-  settings: SupabaseSettings = supabaseSettings(),
+  settings: SupabaseSettings | undefined = undefined,
 ): Promise<SessionClaims | undefined> {
-  const token = accessTokenFromCookies(cookies, settings.url);
+  // The local issuer is checked FIRST and returns early, so a machine running it never falls
+  // through to provider configuration it does not have. Note what is NOT special-cased below:
+  // verification, membership, and scope minting are the same code for both. A local session is a
+  // real session that happens to be signed by us — it is not a bypass, and a person with one still
+  // has to be on the allowlist to see a single document.
+  if (settings === undefined && localIssuerAllowed()) {
+    const raw = cookies.get(LOCAL_COOKIE);
+    if (raw === undefined || raw === '') return undefined;
+    try {
+      return verifySessionToken(raw, {
+        issuer: LOCAL_ISSUER,
+        audience: 'authenticated',
+        hmacSecret: localIssuerSecret(),
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  const resolved = settings ?? supabaseSettings();
+  const token = accessTokenFromCookies(cookies, resolved.url);
   if (token === undefined) return undefined;
+  return providerClaims(token, resolved);
+}
+
+async function providerClaims(
+  token: string,
+  settings: SupabaseSettings,
+): Promise<SessionClaims | undefined> {
 
   try {
     return verifySessionToken(token, await verifierConfig(settings));

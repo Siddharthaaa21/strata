@@ -24,8 +24,16 @@ gets a workspace at all. A stranger with a perfectly valid provider session and 
 gets the same treatment as no session: back to this screen. That separation is why it is safe for
 any of this to run in a browser.
 
-`/auth/callback` completes the PKCE exchange and is the only other route in the flow. Sign-out is a
-server action that clears the cookie.
+`/auth/callback` completes the PKCE exchange. Sign-out is `POST /auth/signout`.
+
+**`/auth/dev-login` is a LOCAL ISSUER, not a bypass.** It signs a real session token with an
+ephemeral per-process key so the app can be demonstrated without a provider account. What it does
+NOT do is skip anything downstream: the token goes through the same `verifySessionToken`, and the
+person it names must still be on the allowlist before they see one document. Gated by
+`localIssuerAllowed()` — explicit `STRATA_DEV_AUTH=1` **and** three independent proofs the process
+is not deployed (`VERCEL`, `AWS_LAMBDA_FUNCTION_NAME`, `NODE_ENV`). It answers 404 rather than 403
+when refused, because a route that explains itself tells an attacker on a misconfigured deploy what
+to look for. Reached via `npm run dev:local`; plain `npm run dev` uses the real provider.
 
 **Related:** [[screen-agent-access]] is increment 3 and also has no design; when both are drawn they
 should be drawn together, since they are the two screens about credentials rather than documents.

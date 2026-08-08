@@ -257,9 +257,14 @@ Audience decided 2026-08-04: a few teammates, one shared workspace (ADR 0006 sec
       `agent:create` requires `--by <member email>` so removal can actually reach the agent, and
       `removeMember` returns counts so the CLI stops claiming a revocation it did not perform.
       Two of the new tests failed mutation on the first attempt and were rewritten — see D16.
-- [ ] Supabase Auth provider integration — the only piece needing credentials
-- [ ] `vault()` becomes async and reads the session
-- [ ] `localDevScope` deleted — dev uses a real credential through the real path, never a second one
+- [x] `vault()` is async and mints its `Scope` from the caller's session — cookie, verified JWS,
+      membership. Magic-link login, PKCE callback, POST-only sign-out. No unauthenticated fallback:
+      an unconfigured provider throws rather than quietly serving an open mode.
+- [ ] Supabase Auth **proven against a live project** — the only piece needing credentials, and the
+      one thing that could not be tested without them
+- [ ] `localDevScope` deleted. Unreachable from the web app now, but `scripts/ingest.mjs` and
+      `scripts/search.mjs` still call it, so the function still exists. They move to
+      `STRATA_CLI_TOKEN` and then it goes.
 
 **Increment 3 — the screen**
 

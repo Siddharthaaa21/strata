@@ -28,7 +28,7 @@ import {
   type EventStore,
   type SourceStore,
 } from '@strata/storage';
-import { claimsFromCookies, supabaseSettings } from './session.ts';
+import { claimsFromCookies } from './session.ts';
 
 /**
  * Next loads `.env` from the app directory; ours lives at the monorepo root so the CLI scripts and
@@ -136,11 +136,13 @@ export async function vault(): Promise<Vault> {
     throw new Error('STRATA_WORKSPACE_ID is not set. See docs/SETUP.md.');
   }
 
-  const settings = supabaseSettings();
   const jar = await cookies();
   const asMap = new Map(jar.getAll().map((c) => [c.name, c.value]));
 
-  const claims = await claimsFromCookies(asMap, settings);
+  // No settings argument: `claimsFromCookies` picks the local issuer when it is explicitly enabled
+  // on a non-deployed machine, and the real provider otherwise. Everything after this line is
+  // identical either way.
+  const claims = await claimsFromCookies(asMap);
   if (claims === undefined) throw new NotSignedIn('no valid session cookie');
 
   const db = fromPoolLike(pool());
