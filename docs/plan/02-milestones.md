@@ -251,6 +251,12 @@ Audience decided 2026-08-04: a few teammates, one shared workspace (ADR 0006 sec
 - [x] `scopeFromSession` gated on membership — an authenticated stranger is still a stranger
 - [x] `removeMember` revokes the person, the agents they created, and those agents tokens
 - [x] `npm run member -- <list|add|remove>` for operating the allowlist without SQL
+- [x] **Round-five fixes (D16)**, landed before the provider rather than after. `resolveSession`
+      and `scopeFromSession` take a `workspaceId`; `(provider, subject)` binds an invitation to one
+      credential; `email_verified` requires an explicit true in either location it can appear;
+      `agent:create` requires `--by <member email>` so removal can actually reach the agent, and
+      `removeMember` returns counts so the CLI stops claiming a revocation it did not perform.
+      Two of the new tests failed mutation on the first attempt and were rewritten — see D16.
 - [ ] Supabase Auth provider integration — the only piece needing credentials
 - [ ] `vault()` becomes async and reads the session
 - [ ] `localDevScope` deleted — dev uses a real credential through the real path, never a second one

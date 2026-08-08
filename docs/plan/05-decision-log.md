@@ -474,3 +474,60 @@ read text" — is strictly broader than the property it implements. Homoglyphs, 
 combining overlays, and strong-RTL script with no bidi *control* all survive and all can make the
 Library and an agent disagree. None is default-ignorable and stripping them would be wrong; you
 cannot strip Hebrew. Normalization is not the mitigation for those. The fence and the label are.
+
+---
+
+## D16 — Round five: the membership layer, and what "flaky" was hiding · 2026-08-08
+
+**Context.** Five independent adversarial review rounds, each finding real defects in the previous
+round's fixes. Round five was pointed at the membership and session code — the least-reviewed thing
+in the repo, written fast to unblock increment 2, and the layer that goes live the moment a provider
+is wired. Nothing found was exploitable on the day it was found: `vault()` still used
+`localDevScope` and no production path called `scopeFromSession`. All of it would have gone live
+together.
+
+**What was wrong, and the shape they share.** Every one is a check that *appears* to run and does
+not.
+
+| Defect | Why it looked fine |
+| --- | --- |
+| `resolveSession` had no `workspace_id` predicate and no `ORDER BY`, then took `rows[0]` | Correct with one workspace, which is all any test had |
+| `user_identities` was written on first sign-in and never read | The write is visible in the code and in the schema; only the *read* was missing, so a second provider subject inherited the first person's account by email alone |
+| `email_verified === false` rejected, absent accepted | Reads as a verification check. Supabase puts the flag in `user_metadata`, so on the chosen provider it never fired once |
+| `removeMember` filtered agents by `created_by IN (...)` | `NULL IN (...)` is never true, and `agent:create` never set `created_by` — so it revoked nothing, while the CLI printed that it had |
+| `addMember` re-granted with `source_ids = NULL` | NULL means *every source*; re-inviting a narrowed member silently widened them |
+| The search fallback ranked against `strict_q` | Every fallback row scored 0 — by definition, since they are the rows that did not match the strict query — so it ordered by recency, the opposite of its comment |
+
+**The decision.** `resolveSession` and `scopeFromSession` now take the workspace as a parameter
+rather than discovering it; identity is `(provider, subject)` and an invitation is single-use;
+`email_verified` requires an explicit `true` in either location, with an opt-out named
+`allowUnverifiedEmail` so that turning it on reads as badly as it deserves; `agent:create` requires
+`--by <member email>`; and `removeMember` returns counts so the CLI reports what happened instead of
+asserting what should have.
+
+**The lesson worth keeping, which is not in the table.** Two of the fixes were verified by mutation
+— reintroduce the bug, confirm the test goes red — and *both new tests failed that check on the
+first attempt*:
+
+- The `addMember` narrowing test never reached the line it was testing. `removeMember` revokes the
+  membership, the principal and its tokens but **not grants**, so the narrowed grant stayed active,
+  `addMember`'s `NOT EXISTS` guard skipped the insert, and the assertion passed without executing
+  the changed code. The comment in `addMember` claiming removal leaves the grant revoked was also
+  simply false.
+- The existing "the fallback ranks documents matching more terms first" test passed *with the bug
+  present*, because both fixtures shared an `updatedAt` and the expected order was reachable through
+  the recency tiebreaker. It now makes recency actively disagree with relevance.
+
+**And one defect found only because a test looked flaky.** The first narrowing fix ordered candidate
+grants by `created_at DESC LIMIT 1`. Grants are stamped from two clocks — this package writes a JS
+timestamp, an operator writing SQL writes `now()` — so two can tie inside one millisecond, and a tie
+with no tiebreaker resolves to whatever the planner returns. That is a coin flip between inheriting
+a narrowing and inheriting NULL, which is the whole vault. It presented as a test that passed alone
+and failed in a full run. **A test that passes in isolation and fails in a suite is reporting a
+race, not flakiness; the ordering is now total (`revoked_at DESC, created_at DESC, id DESC`).**
+
+**Reversible?** The signature changes are compile-time breaks, so reverting is loud. The identity
+binding is the one deliberate behaviour change with a user-visible edge: a member who legitimately
+signs in through a *second* provider with the same address is now refused rather than silently
+merged. That is the correct default — the alternative is the classic pre-hijack — but it is a
+support question the day someone hits it, and it is recorded here so the answer is not re-derived.

@@ -34,6 +34,16 @@ export interface SessionVerifierConfig {
   readonly publicKeys?: Readonly<Record<string, import('node:crypto').JsonWebKey>>;
   /** Tolerance for clock skew between us and the provider. */
   readonly clockToleranceSeconds?: number;
+  /**
+   * Accept a token whose email the provider has NOT asserted as verified.
+   *
+   * Off by default, and named to read badly in a config file, because that is what it is. The
+   * allowlist matches on email address; if a provider will hand out a session for an address
+   * nobody proved they own, then "invite alice@company.com" becomes "invite whoever claims to be
+   * alice@company.com". Turning this on is only defensible for a provider that verifies out of
+   * band and does not say so in the token.
+   */
+  readonly allowUnverifiedEmail?: boolean;
 }
 
 export class SessionError extends Error {
@@ -46,12 +56,30 @@ export class SessionError extends Error {
   }
 }
 
-const decode = (part: string): unknown => {
+/**
+ * Decodes one JWS segment to an OBJECT, or throws `SessionError`.
+ *
+ * The object check is not pedantry. `JSON.parse` happily returns `null`, a number, or an array,
+ * and every one of those is reachable from an attacker-supplied token: `eyJ9` style segments
+ * decoding to `null` made `header.alg` a property read on `null`, which throws `TypeError`, not
+ * `SessionError`. That difference matters because the caller maps `SessionError` to one wire word
+ * and lets anything else escape — so a malformed token surfaced as a 500 with a stack trace
+ * instead of a clean rejection. The distinction between "we rejected you" and "you crashed us" is
+ * one an attacker reads for free.
+ *
+ * A null prototype so that later key lookups on the decoded object cannot walk `Object.prototype`.
+ */
+const decodeObject = (part: string): Record<string, unknown> => {
+  let parsed: unknown;
   try {
-    return JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+    parsed = JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
   } catch {
     throw new SessionError('malformed');
   }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new SessionError('malformed');
+  }
+  return Object.assign(Object.create(null) as Record<string, unknown>, parsed);
 };
 
 /**
@@ -70,6 +98,21 @@ function assertOneKeyKind(config: SessionVerifierConfig): 'hmac' | 'asymmetric' 
   if (hasHmac && hasKeys) throw new SessionError('config: both hmacSecret and publicKeys');
   if (!hasHmac && !hasKeys) throw new SessionError('config: no verification key');
   return hasHmac ? 'hmac' : 'asymmetric';
+}
+
+/**
+ * True only when the provider explicitly asserts the address is verified.
+ *
+ * Two locations, because providers disagree: the OIDC standard puts `email_verified` at the top
+ * level, and Supabase puts it inside `user_metadata`. Anything other than boolean `true` in one of
+ * those two places is not an assertion — absent, `"true"`, `1`, and `null` all read as "no".
+ */
+function claimsEmailVerified(payload: Record<string, unknown>): boolean {
+  if (payload['email_verified'] === true) return true;
+
+  const meta = payload['user_metadata'];
+  if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) return false;
+  return Object.hasOwn(meta, 'email_verified') && (meta as Record<string, unknown>)['email_verified'] === true;
 }
 
 function verifySignature(
@@ -95,10 +138,26 @@ function verifySignature(
   if (alg === 'HS256') throw new SessionError('HS256 against a public key — algorithm confusion');
   if (kid === undefined) throw new SessionError('no kid');
 
-  const jwk = config.publicKeys![kid];
-  if (jwk === undefined) throw new SessionError('unknown kid');
+  // `Object.hasOwn`, not a truthiness check on the value.
+  //
+  // `kid` is attacker-controlled, and plain property access inherits from `Object.prototype`: a
+  // header of `{"kid":"constructor"}` returned `Object`, which is not `undefined`, so it walked
+  // straight past the unknown-kid guard and into `createPublicKey` — where it threw `TypeError`
+  // rather than `SessionError` and escaped as a 500. `__proto__`, `toString`, and `valueOf` all
+  // behave the same way. An own-property check is the fix for the whole class at once.
+  const keys = config.publicKeys!;
+  if (!Object.hasOwn(keys, kid)) throw new SessionError('unknown kid');
+  const jwk = keys[kid];
+  if (jwk === null || typeof jwk !== 'object') throw new SessionError('unknown kid');
 
-  const key = createPublicKey({ key: jwk, format: 'jwk' });
+  // A JWKS is fetched from the provider, so a malformed entry is not purely our own configuration
+  // error — and `createPublicKey` reports one by throwing something that is not a `SessionError`.
+  let key;
+  try {
+    key = createPublicKey({ key: jwk, format: 'jwk' });
+  } catch {
+    throw new SessionError('unusable key');
+  }
   const ok = cryptoVerify(
     'sha256',
     Buffer.from(signingInput),
@@ -126,11 +185,10 @@ export function verifySessionToken(
   const parts = token.split('.');
   if (parts.length !== 3) throw new SessionError('malformed');
 
-  const header = decode(parts[0]!) as { alg?: unknown; kid?: unknown; typ?: unknown };
-  const payload = decode(parts[1]!) as Record<string, unknown>;
+  const header = decodeObject(parts[0]!);
   const signature = Buffer.from(parts[2]!, 'base64url');
 
-  const alg = header.alg;
+  const alg = header['alg'];
   if (alg !== 'HS256' && alg !== 'RS256' && alg !== 'ES256') {
     // Catches `none` and every other unsupported value in one place. `none` is not special-cased
     // because an allowlist that happens to exclude it is stronger than a denylist that names it.
@@ -140,13 +198,18 @@ export function verifySessionToken(
   verifySignature(
     config,
     alg,
-    typeof header.kid === 'string' ? header.kid : undefined,
+    typeof header['kid'] === 'string' ? header['kid'] : undefined,
     `${parts[0]}.${parts[1]}`,
     signature,
   );
 
-  // Signature first, claims second. Reading claims from an unverified token and acting on them —
-  // even to decide which key to use — is how "verified" quietly becomes "parsed".
+  // Signature first, claims second — including the DECODE, which used to happen above alongside the
+  // header. Only the header has to be read early, because `alg` and `kid` select the verification
+  // path; the payload does not, so parsing it first bought nothing and meant a malformed payload
+  // was reported as malformed on a token whose signature had never been checked. Decoding here
+  // makes the ordering in the code match the sentence describing it.
+  const payload = decodeObject(parts[1]!);
+
   const skew = config.clockToleranceSeconds ?? 60;
   const seconds = Math.floor(now().getTime() / 1000);
 
@@ -168,10 +231,22 @@ export function verifySessionToken(
   if (typeof subject !== 'string' || subject === '') throw new SessionError('no sub');
   if (typeof email !== 'string' || email.trim() === '') throw new SessionError('no email');
 
-  // A provider can assert an address it never checked. Supabase sets this on the user record; if a
-  // deployment allows unverified email sign-up, an attacker can claim a colleague's address and the
-  // allowlist would match it. Refusing here is cheap; discovering it later is not.
-  if (payload['email_verified'] === false) throw new SessionError('email not verified');
+  // A provider can assert an address it never checked, and the allowlist matches on address. If a
+  // deployment permits unverified sign-up, an attacker registers a colleague's address and the
+  // allowlist lets them in as that colleague.
+  //
+  // This check REQUIRES an explicit true. The previous form rejected only an explicit `false`,
+  // which meant an absent claim read as verified — and absent is the normal case, not the exotic
+  // one: Supabase carries the flag inside `user_metadata`, so a top-level lookup found nothing on
+  // the very provider this was written for and the check never fired at all. A guard that is
+  // satisfied by silence protects nothing.
+  //
+  // Both locations are consulted because providers disagree on where it lives, and `hasOwn` guards
+  // the nested read for the same reason `kid` does above — `user_metadata` is parsed from the
+  // token and reaching `constructor` there must not look like an assertion.
+  if (config.allowUnverifiedEmail !== true && !claimsEmailVerified(payload)) {
+    throw new SessionError('email not verified');
+  }
 
   return { provider: config.issuer, subject, email: email.trim().toLowerCase() };
 }

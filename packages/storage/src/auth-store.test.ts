@@ -316,7 +316,7 @@ test('an authenticated stranger is still a stranger', async () => {
   // person gets a workspace, and that decision is ours, not the provider's.
   const { auth } = await fresh();
   const kind = await auth
-    .scopeFromSession(claims('nobody@example.com'))
+    .scopeFromSession(WS, claims('nobody@example.com'))
     .then(() => null, (e: AuthError) => e.kind);
   assert.equal(kind, 'no-membership');
 });
@@ -325,12 +325,12 @@ test('an allowlisted address gets a principal on first sign-in, and the same one
   const { store, auth } = await fresh();
   await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
 
-  const first = await auth.scopeFromSession(claims('priya@example.com'));
+  const first = await auth.scopeFromSession(WS, claims('priya@example.com'));
   assert.equal(first.workspaceId, WS);
   assert.equal(first.principal.kind, 'user');
   assert.equal(scopeFilter(first).sourceIds, undefined, 'a member reaches the whole workspace');
 
-  const second = await auth.scopeFromSession(claims('priya@example.com'));
+  const second = await auth.scopeFromSession(WS, claims('priya@example.com'));
   assert.equal(second.principal.id, first.principal.id, 'a second sign-in must not mint a second account');
 });
 
@@ -339,7 +339,7 @@ test('the provider subject is never the PrincipalId', async () => {
   // foreign key and every access-log row instead of one table.
   const { db, store, auth } = await fresh();
   await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
-  const scope = await auth.scopeFromSession(claims('priya@example.com', 'google-oauth2|1234567890'));
+  const scope = await auth.scopeFromSession(WS, claims('priya@example.com', 'google-oauth2|1234567890'));
 
   assert.notEqual(scope.principal.id, 'google-oauth2|1234567890');
   const { rows } = await db.query<{ principal_id: string; subject: string }>(
@@ -354,7 +354,7 @@ test('email matching ignores case and surrounding whitespace', async () => {
   const { store, auth } = await fresh();
   await store.addMember({ workspaceId: WS, email: '  Priya@Example.COM ' });
 
-  const scope = await auth.scopeFromSession(claims('priya@example.com'));
+  const scope = await auth.scopeFromSession(WS, claims('priya@example.com'));
   assert.equal(scope.workspaceId, WS);
 });
 
@@ -363,10 +363,10 @@ test('removing a member kills their agent tokens in the same breath', async () =
   // web app and keeps their MCP access, which is the worse half.
   const { store, auth } = await fresh();
   await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
-  await auth.scopeFromSession(claims('priya@example.com'));
+  await auth.scopeFromSession(WS, claims('priya@example.com'));
 
   // That member creates an agent, as any member may (Membership is flat by ADR 0002).
-  const member = await auth.scopeFromSession(claims('priya@example.com'));
+  const member = await auth.scopeFromSession(WS, claims('priya@example.com'));
   const { presented } = await store.createAgent(
     agent({ displayName: "Priya's laptop", createdBy: member.principal.id }),
   );
@@ -375,7 +375,7 @@ test('removing a member kills their agent tokens in the same breath', async () =
   await store.removeMember(WS, 'PRIYA@example.com');
 
   const session = await auth
-    .scopeFromSession(claims('priya@example.com'))
+    .scopeFromSession(WS, claims('priya@example.com'))
     .then(() => null, (e: AuthError) => e.kind);
   assert.equal(session, 'no-membership', 'the person can no longer sign in');
 
@@ -392,8 +392,8 @@ test('two members share one workspace and get separate principals', async () => 
   await store.addMember({ workspaceId: WS, email: 'a@example.com' });
   await store.addMember({ workspaceId: WS, email: 'b@example.com' });
 
-  const a = await auth.scopeFromSession(claims('a@example.com', 'sub-a'));
-  const b = await auth.scopeFromSession(claims('b@example.com', 'sub-b'));
+  const a = await auth.scopeFromSession(WS, claims('a@example.com', 'sub-a'));
+  const b = await auth.scopeFromSession(WS, claims('b@example.com', 'sub-b'));
 
   assert.notEqual(a.principal.id, b.principal.id);
   assert.equal(a.workspaceId, b.workspaceId, 'one shared workspace — no switcher needed');
@@ -402,7 +402,7 @@ test('two members share one workspace and get separate principals', async () => 
 test('re-inviting a removed member restores access', async () => {
   const { store, auth } = await fresh();
   await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
-  const before = await auth.scopeFromSession(claims('priya@example.com'));
+  const before = await auth.scopeFromSession(WS, claims('priya@example.com'));
   await store.removeMember(WS, 'priya@example.com');
 
   await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
@@ -410,7 +410,7 @@ test('re-inviting a removed member restores access', async () => {
   // Remove-then-re-add must round trip. Restoring the membership row alone left the principal
   // revoked, so a returning member hit Unauthorized while the operator saw them listed as a member
   // — an asymmetry that is invisible from both sides.
-  const restored = await auth.scopeFromSession(claims('priya@example.com'));
+  const restored = await auth.scopeFromSession(WS, claims('priya@example.com'));
   assert.equal(restored.workspaceId, WS);
   assert.equal(restored.principal.id, before.principal.id, 'and it is the same account, not a new one');
 });
@@ -421,13 +421,13 @@ test('re-inviting does NOT reanimate revoked agent tokens', async () => {
   // the opposite of what revocation means.
   const { store, auth } = await fresh();
   await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
-  const member = await auth.scopeFromSession(claims('priya@example.com'));
+  const member = await auth.scopeFromSession(WS, claims('priya@example.com'));
   const { presented } = await store.createAgent(agent({ createdBy: member.principal.id }));
 
   await store.removeMember(WS, 'priya@example.com');
   await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
 
-  assert.ok(await auth.scopeFromSession(claims('priya@example.com')), 'the person is back');
+  assert.ok(await auth.scopeFromSession(WS, claims('priya@example.com')), 'the person is back');
   const tokenKind = await auth
     .scopeFromAgentToken(presented)
     .then(() => null, (e: AuthError) => e.kind);
@@ -438,12 +438,201 @@ test('listMembers shows the allowlist including who has not signed in yet', asyn
   const { store, auth } = await fresh();
   await store.addMember({ workspaceId: WS, email: 'joined@example.com' });
   await store.addMember({ workspaceId: WS, email: 'pending@example.com' });
-  await auth.scopeFromSession(claims('joined@example.com'));
+  await auth.scopeFromSession(WS, claims('joined@example.com'));
 
   const members = await store.listMembers(WS);
   assert.equal(members.length, 2);
   assert.ok(members.find((m) => m.email === 'joined@example.com')?.joinedAt);
   assert.equal(members.find((m) => m.email === 'pending@example.com')?.joinedAt, undefined);
+});
+
+// --- round-five findings: the session path, which nothing in production reached yet ------------
+
+const WS2 = 'ws-beta' as WorkspaceId;
+
+test('a session resolves in the workspace the caller names, not one the store picks', async () => {
+  // The lookup was `WHERE email = $1` with no workspace predicate and no ORDER BY, then took
+  // rows[0]. One person in two workspaces landed in whichever the planner happened to return
+  // first, and that is free to change between two identical requests.
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  await store.addMember({ workspaceId: WS2, email: 'priya@example.com' });
+
+  const a = await auth.scopeFromSession(WS, claims('priya@example.com'));
+  const b = await auth.scopeFromSession(WS2, claims('priya@example.com', 'sub-2'));
+
+  assert.equal(a.workspaceId, WS);
+  assert.equal(b.workspaceId, WS2);
+  assert.notEqual(a.principal.id, b.principal.id, 'two workspaces means two principals');
+
+  // And repeated calls are stable, which is the part an unordered rows[0] could not promise.
+  for (let i = 0; i < 5; i++) {
+    assert.equal((await auth.scopeFromSession(WS, claims('priya@example.com'))).workspaceId, WS);
+  }
+});
+
+test('a membership revoked in one workspace does not lock the member out of another', async () => {
+  // The failure the missing predicate produced: with no ORDER BY, a revoked row could sort first
+  // and the `revoked_at != null` check would reject a member who was perfectly active elsewhere.
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  await store.addMember({ workspaceId: WS2, email: 'priya@example.com' });
+  await auth.scopeFromSession(WS, claims('priya@example.com'));
+  await auth.scopeFromSession(WS2, claims('priya@example.com', 'sub-2'));
+
+  await store.removeMember(WS2, 'priya@example.com');
+
+  const still = await auth.scopeFromSession(WS, claims('priya@example.com'));
+  assert.equal(still.workspaceId, WS, 'removal from one workspace is not removal from all');
+
+  const gone = await auth
+    .scopeFromSession(WS2, claims('priya@example.com', 'sub-2'))
+    .then(() => null, (e: AuthError) => e.kind);
+  assert.equal(gone, 'no-membership');
+});
+
+test('an invitation is claimed by ONE provider credential, and not by a second', async () => {
+  // `user_identities` was written on first sign-in and then never read, so resolution ran purely on
+  // email. A different provider subject presenting the same address inherited the first person's
+  // principal, their grant, and their history — and the address is the part an attacker chooses.
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+
+  const priya = await auth.scopeFromSession(WS, claims('priya@example.com', 'subject-priya'));
+
+  const impostor = await auth
+    .scopeFromSession(WS, claims('priya@example.com', 'subject-somebody-else'))
+    .then(() => 'INHERITED THE ACCOUNT', (e: AuthError) => e.kind);
+  assert.equal(impostor, 'no-membership', 'a second subject must not claim a taken invitation');
+
+  // The real one still works, and is still the same account.
+  const again = await auth.scopeFromSession(WS, claims('priya@example.com', 'subject-priya'));
+  assert.equal(again.principal.id, priya.principal.id);
+});
+
+test('the same subject arriving from a different provider is also refused', async () => {
+  // Subject ids are only unique WITHIN a provider, so the pair is the identity. Matching on
+  // subject alone would hand an account to anyone whose provider happens to number users the same
+  // way — and "1234" is a plausible subject at more than one provider.
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  await auth.scopeFromSession(WS, claims('priya@example.com', '1234', 'provider-a'));
+
+  const kind = await auth
+    .scopeFromSession(WS, claims('priya@example.com', '1234', 'provider-b'))
+    .then(() => null, (e: AuthError) => e.kind);
+  assert.equal(kind, 'no-membership');
+});
+
+test('re-inviting a narrowed member does not silently widen their grant', async () => {
+  // addMember mints a replacement grant, and it used to mint it with source_ids = NULL, which means
+  // every source. Re-adding someone deliberately restricted to one source handed them the whole
+  // vault — a privilege escalation performed by an operator doing something purely administrative,
+  // and invisible afterwards because listMembers reports membership, not scope.
+  const { db, store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  const before = await auth.scopeFromSession(WS, claims('priya@example.com'));
+
+  // Narrow them the way an operator would: revoke the open grant, issue a restricted one.
+  //
+  // Timestamps are pinned rather than left to now(). The original grant's `created_at` comes from
+  // this package's JS clock and an operator's comes from Postgres, so leaving both to chance let
+  // them collide inside one millisecond — and the assertion below then depended on how a tie was
+  // broken. That made this test pass in isolation and fail in a full run, which reads as flakiness
+  // and was actually the defect.
+  await db.query(
+    `UPDATE grants SET revoked_at = TIMESTAMPTZ '2026-01-01T00:00:01Z' WHERE principal_id = $1`,
+    [before.principal.id],
+  );
+  await db.query(
+    `INSERT INTO grants (workspace_id, id, principal_id, source_ids, created_at)
+     VALUES ($1, 'g-narrow', $2, ARRAY[$3], TIMESTAMPTZ '2026-01-01T00:00:02Z')`,
+    [WS, before.principal.id, SRC],
+  );
+  const narrowed = await auth.scopeFromSession(WS, claims('priya@example.com'));
+  assert.deepEqual(scopeFilter(narrowed).sourceIds, [SRC], 'precondition: they are narrowed');
+
+  await store.removeMember(WS, 'priya@example.com');
+
+  // Suspend their authority as well as their membership. This step is the one that makes the test
+  // real: `removeMember` revokes the membership, the principal and its tokens, but NOT grants — so
+  // without this the narrowed grant stays active, addMember's insert is skipped by its own
+  // NOT EXISTS guard, and the assertion below passes while never reaching the line under test.
+  // An earlier version of this test did exactly that and survived a mutation that reintroduced the
+  // bug.
+  await db.query(
+    `UPDATE grants SET revoked_at = TIMESTAMPTZ '2026-01-01T00:00:03Z'
+      WHERE principal_id = $1 AND revoked_at IS NULL`,
+    [before.principal.id],
+  );
+
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+
+  const restored = await auth.scopeFromSession(WS, claims('priya@example.com'));
+  assert.deepEqual(
+    scopeFilter(restored).sourceIds,
+    [SRC],
+    're-inviting must restore the scope they had, not grant the whole workspace',
+  );
+});
+
+test('the inherited scope is chosen deterministically when grants share a timestamp', async () => {
+  // The tie the version above hid. Two grants with IDENTICAL created_at — reachable because this
+  // package and a hand-written SQL statement stamp grants from different clocks — must not resolve
+  // to "whichever the planner felt like", because one of the two answers is the entire workspace.
+  const { db, store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  const before = await auth.scopeFromSession(WS, claims('priya@example.com'));
+  const SAME = `TIMESTAMPTZ '2026-01-01T00:00:00Z'`;
+
+  await db.query(`UPDATE grants SET created_at = ${SAME}, revoked_at = ${SAME} WHERE principal_id = $1`, [
+    before.principal.id,
+  ]);
+  // Same created_at as the unnarrowed one, but revoked LATER — so it is the one they last held.
+  await db.query(
+    `INSERT INTO grants (workspace_id, id, principal_id, source_ids, created_at, revoked_at)
+     VALUES ($1,'g-tie',$2,ARRAY[$3], ${SAME}, TIMESTAMPTZ '2026-01-01T00:00:05Z')`,
+    [WS, before.principal.id, SRC],
+  );
+
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+
+  // Repeated to catch an ordering that is merely usually right.
+  for (let i = 0; i < 3; i++) {
+    const s = await auth.scopeFromSession(WS, claims('priya@example.com'));
+    assert.deepEqual(scopeFilter(s).sourceIds, [SRC], `iteration ${i} inherited the wrong grant`);
+  }
+});
+
+test('removeMember reports what it actually revoked', async () => {
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  const member = await auth.scopeFromSession(WS, claims('priya@example.com'));
+  await store.createAgent(agent({ displayName: 'hers', createdBy: member.principal.id }));
+
+  const report = await store.removeMember(WS, 'priya@example.com');
+  assert.equal(report.principalsRevoked, 2, 'the person and the agent they created');
+  assert.equal(report.tokensRevoked, 1);
+  assert.equal(report.unattributedAgents, 0);
+});
+
+test('an agent with no creator survives every removal, and the report says so', async () => {
+  // The defect the CLI message hid: `created_by IN (...)` never matches NULL, so an agent created
+  // without an owner is untouched by removing anyone — while the CLI printed "their agents and
+  // agent tokens are revoked too". This asserts the limitation AND that it is now reported, rather
+  // than asserting a sweep that cannot happen.
+  const { store, auth } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'priya@example.com' });
+  await auth.scopeFromSession(WS, claims('priya@example.com'));
+  const { presented } = await store.createAgent(agent({ displayName: 'nobody owns me' }));
+
+  const report = await store.removeMember(WS, 'priya@example.com');
+  assert.equal(report.unattributedAgents, 1, 'the operator is told an unownable agent exists');
+
+  assert.ok(
+    await auth.scopeFromAgentToken(presented),
+    'and it does still work — which is exactly why the count has to be surfaced',
+  );
 });
 
 test('malformed claims are rejected without a database round trip', async () => {
@@ -453,7 +642,7 @@ test('malformed claims are rejected without a database round trip', async () => 
     { provider: 'supabase', subject: '', email: 'a@b.c' },
     {} as never,
   ]) {
-    const kind = await auth.scopeFromSession(bad as never).then(() => null, (e: AuthError) => e.kind);
+    const kind = await auth.scopeFromSession(WS, bad as never).then(() => null, (e: AuthError) => e.kind);
     assert.equal(kind, 'malformed');
   }
 });

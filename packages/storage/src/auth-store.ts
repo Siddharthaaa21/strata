@@ -185,30 +185,84 @@ export function createAuthStore(db: SqlDriver): AuthStore {
     },
 
     /**
-     * Resolves a verified session, creating the principal on first sign-in.
+     * Resolves a verified session within ONE workspace, creating the principal on first sign-in.
      *
-     * Membership is looked up by EMAIL, not by the provider's subject id, because the allowlist is
-     * written before anyone signs in — an operator adds an address, not a stranger's opaque
-     * provider id. The subject is recorded on first sign-in so later logins are stable even if the
-     * person changes their email at the provider.
+     * Membership is keyed by EMAIL because the allowlist is written before anyone signs in — an
+     * operator invites an address, not a stranger's opaque provider id. But the email only selects
+     * the invitation. What decides *which credential* may claim it is the `(provider, subject)`
+     * pair, checked below.
+     *
+     * TWO PROPERTIES, and the second one used not to hold at all:
+     *
+     *   1. **Scoped to the workspace the caller names.** `(workspace_id, email)` is unique, so this
+     *      matches at most one row. Selecting on email alone returned rows from every workspace and
+     *      took whichever came first, with no ORDER BY to make even that stable — so one person in
+     *      two workspaces landed in an arbitrary one, and a revoked row sorting first locked out a
+     *      member who was active elsewhere.
+     *
+     *   2. **One invitation, one credential.** `user_identities` was written on first sign-in and
+     *      then never read, which made the write decorative: resolution ran entirely on email, so a
+     *      DIFFERENT provider subject presenting the same address inherited the first person's
+     *      principal, their grant, and their history. The address is the thing an attacker picks;
+     *      binding it to the subject that first claimed it is what makes the invitation
+     *      single-use.
      */
-    async resolveSession(claims) {
+    async resolveSession(workspaceId, claims) {
       const email = claims.email.trim().toLowerCase();
 
       const membership = await db.query<{
-        workspace_id: string;
         principal_id: string | null;
         revoked_at: Date | string | null;
       }>(
-        `SELECT workspace_id, principal_id, revoked_at FROM memberships WHERE email = $1`,
-        [email],
+        `SELECT principal_id, revoked_at FROM memberships
+          WHERE workspace_id = $1 AND email = $2`,
+        [workspaceId, email],
       );
 
       const member = membership.rows[0];
       // Not on the allowlist, or membership ended. Both are "no", and the caller reports one word.
       if (member === undefined || member.revoked_at != null) return undefined;
 
-      const workspaceId = member.workspace_id as WorkspaceId;
+      // Who this credential is already bound to, if anyone. `(provider, subject)` is the primary
+      // key, so this is one row or none, globally.
+      const { rows: identityRows } = await db.query<{
+        workspace_id: string;
+        principal_id: string;
+      }>(
+        `SELECT workspace_id, principal_id FROM user_identities
+          WHERE provider = $1 AND subject = $2`,
+        [claims.provider, claims.subject],
+      );
+      const identity = identityRows[0];
+
+      if (identity !== undefined) {
+        // A known credential. It must be bound to this workspace AND to the principal this
+        // invitation already resolved to — otherwise the two records disagree about who this is,
+        // and guessing which one is right is how a session gets attributed to the wrong person.
+        if (identity.workspace_id !== workspaceId) return undefined;
+        if (member.principal_id === null || identity.principal_id !== member.principal_id) {
+          return undefined;
+        }
+      } else if (member.principal_id !== null) {
+        // The invitation has been claimed, by a credential that is not this one. Bind only if the
+        // principal genuinely has no identity yet — true for a member created before identities
+        // were recorded, and for one an operator provisioned directly. If an identity already
+        // exists, this is a second credential arriving at a claimed invitation, which is the case
+        // the binding exists to refuse.
+        const { rows: bound } = await db.query<{ one: number }>(
+          `SELECT 1 AS one FROM user_identities
+            WHERE workspace_id = $1 AND principal_id = $2 LIMIT 1`,
+          [workspaceId, member.principal_id],
+        );
+        if (bound.length > 0) return undefined;
+
+        await db.query(
+          `INSERT INTO user_identities (provider, subject, workspace_id, principal_id, linked_at)
+           VALUES ($1,$2,$3,$4,$5)
+           ON CONFLICT (provider, subject) DO NOTHING`,
+          [claims.provider, claims.subject, workspaceId, member.principal_id, new Date().toISOString()],
+        );
+      }
 
       if (member.principal_id === null) {
         // First sign-in. Principal, grant, identity link, and the membership update all in ONE
@@ -232,8 +286,15 @@ export function createAuthStore(db: SqlDriver): AuthStore {
              ON CONFLICT (provider, subject) DO NOTHING
              RETURNING principal_id
            )
+           -- EXISTS (SELECT 1 FROM i) makes the identity insert the thing that decides the winner
+           -- of a concurrent first sign-in, rather than leaving membership and identity to be
+           -- settled by two independent races. The loser still writes an orphan principal and
+           -- grant -- data-modifying CTEs all run regardless of whether the final statement uses
+           -- them -- but the orphan is unreferenced by any membership or identity, so it grants
+           -- nothing. Cleaning it up is a chore, not a hole.
            UPDATE memberships SET principal_id = $2, joined_at = $4
-            WHERE workspace_id = $1 AND email = $8 AND principal_id IS NULL`,
+            WHERE workspace_id = $1 AND email = $8 AND principal_id IS NULL
+              AND EXISTS (SELECT 1 FROM i)`,
           [workspaceId, principalId, email, now, grantId, claims.provider, claims.subject, email],
         );
       }
@@ -317,11 +378,42 @@ export function createAuthStore(db: SqlDriver): AuthStore {
         [workspaceId, email],
       );
 
-      // A returning member needs an active grant. Their old one was left revoked by removeMember,
-      // and grants_one_active means we cannot simply un-revoke it if another has since been issued.
+      // A returning member needs an active grant, and may have none: `removeMember` revokes the
+      // membership, the principal and its tokens but deliberately not grants, so the usual way to
+      // arrive here is an operator who revoked the grant directly to suspend someone's authority.
+      // `grants_one_active` means we cannot simply un-revoke the old one if another has since been
+      // issued, so this inserts a replacement.
+      //
+      // The new grant INHERITS the narrowing of the most recent one instead of being minted with
+      // `source_ids = NULL`. NULL means every source in the workspace, so re-adding someone who had
+      // been deliberately restricted to one source silently handed them the whole vault — a
+      // privilege escalation performed by the operator, through the CLI, while doing something that
+      // reads as purely administrative. Nothing would have shown it: `listMembers` reports
+      // membership, not scope.
+      //
+      // "The last grant they actually held" is ordered by REVOCATION time, not creation time, and
+      // the ordering is fully deterministic on purpose.
+      //
+      // `ORDER BY created_at DESC LIMIT 1` alone looked right and was not: grants get their
+      // `created_at` from two different clocks — this package writes a JS timestamp, an operator
+      // writing SQL by hand writes `now()` — so two grants created in the same millisecond tie,
+      // and a tie with no tiebreaker resolves to whatever the planner returns. That is a coin flip
+      // between inheriting the narrowing and inheriting NULL, which is the whole vault. It showed
+      // up as a test that passed alone and failed in a full run, which is exactly what a race
+      // looks like when it is being mistaken for flakiness.
+      //
+      // `revoked_at DESC` is also the better question: the grant most recently in force is the one
+      // whose scope should carry over. Postgres sorts NULLs first under DESC, so an active grant
+      // would win outright — correct, though unreachable here because of the NOT EXISTS guard
+      // below. `created_at DESC, id DESC` then makes the remaining ties total.
       await db.query(
         `INSERT INTO grants (workspace_id, id, principal_id, source_ids, created_at)
-         SELECT $1, $3, m.principal_id, NULL, $4
+         SELECT $1, $3, m.principal_id,
+                (SELECT g2.source_ids FROM grants g2
+                  WHERE g2.workspace_id = $1 AND g2.principal_id = m.principal_id
+                  ORDER BY g2.revoked_at DESC, g2.created_at DESC, g2.id DESC
+                  LIMIT 1),
+                $4
            FROM memberships m
           WHERE m.workspace_id = $1 AND m.email = $2 AND m.principal_id IS NOT NULL
             AND NOT EXISTS (
@@ -341,7 +433,11 @@ export function createAuthStore(db: SqlDriver): AuthStore {
      */
     async removeMember(workspaceId, email) {
       const now = new Date().toISOString();
-      await db.query(
+      const { rows } = await db.query<{
+        principals_revoked: string | number;
+        tokens_revoked: string | number;
+        unattributed_agents: string | number;
+      }>(
         `WITH m AS (
            UPDATE memberships SET revoked_at = $3
             WHERE workspace_id = $1 AND email = $2 AND revoked_at IS NULL
@@ -362,11 +458,32 @@ export function createAuthStore(db: SqlDriver): AuthStore {
            UPDATE principals SET revoked_at = $3
             WHERE workspace_id = $1 AND id IN (SELECT id FROM doomed)
            RETURNING id
+         ), revoked_tokens AS (
+           UPDATE agent_tokens SET revoked_at = $3
+            WHERE workspace_id = $1 AND principal_id IN (SELECT id FROM revoked_principals)
+           RETURNING token_id
          )
-         UPDATE agent_tokens SET revoked_at = $3
-          WHERE workspace_id = $1 AND principal_id IN (SELECT id FROM revoked_principals)`,
+         -- Counted and returned so the operator CLI can state what happened instead of asserting
+         -- what is supposed to happen. The two had diverged: the CLI printed "their agents and
+         -- agent tokens are revoked too" unconditionally, while every agent created through
+         -- agent:create had a NULL created_by and therefore matched nothing in the doomed set
+         -- (NULL IN (...) is never true). The message was the only evidence an operator had, and
+         -- it was wrong in the direction that leaves a live credential behind.
+         SELECT (SELECT count(*) FROM revoked_principals) AS principals_revoked,
+                (SELECT count(*) FROM revoked_tokens)     AS tokens_revoked,
+                -- Agents nobody can attribute, so nobody can sweep them up by removing a person.
+                (SELECT count(*) FROM principals p
+                  WHERE p.workspace_id = $1 AND p.created_by IS NULL
+                    AND p.kind <> 'user' AND p.revoked_at IS NULL) AS unattributed_agents`,
         [workspaceId, email.trim().toLowerCase(), now],
       );
+
+      const r = rows[0];
+      return {
+        principalsRevoked: Number(r?.principals_revoked ?? 0),
+        tokensRevoked: Number(r?.tokens_revoked ?? 0),
+        unattributedAgents: Number(r?.unattributed_agents ?? 0),
+      };
     },
 
     async listMembers(workspaceId) {

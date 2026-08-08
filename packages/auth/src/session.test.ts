@@ -25,15 +25,30 @@ const ecJwk = ec.publicKey.export({ format: 'jwk' }) as JsonWebKey;
 
 const future = Math.floor(Date.now() / 1000) + 3600;
 
+/**
+ * A token as a correctly-configured provider would issue it.
+ *
+ * `email_verified` is part of the DEFAULT, not something individual tests opt into. It was absent
+ * before, which meant every happy-path test above was quietly asserting that an unverified address
+ * is accepted — the fixture encoded the bug, so the bug could not fail a test.
+ */
 function claims(over: Record<string, unknown> = {}) {
   return {
     iss: ISSUER,
     aud: 'authenticated',
     sub: 'provider-subject-123',
     email: 'Priya@Example.COM',
+    email_verified: true,
     exp: future,
     ...over,
   };
+}
+
+/** Strips a claim, for the cases where absence is the thing under test. */
+function without(key: string, over: Record<string, unknown> = {}) {
+  const c = claims(over) as Record<string, unknown>;
+  delete c[key];
+  return c;
 }
 
 /** Signs a token the way a provider would. Not a helper under test — a stand-in for the provider. */
@@ -184,14 +199,88 @@ test('issuer and audience must both match', () => {
   assert.ok(verifySessionToken(sign('HS256', claims({ aud: ['authenticated', 'other'] })), hmacConfig));
 });
 
-test('an unverified email is refused', () => {
+test('email verification must be ASSERTED, not merely un-denied', () => {
   // A provider can assert an address it never checked. If a deployment allows unverified sign-up,
-  // an attacker could claim a colleague's address and the allowlist would match it.
+  // an attacker registers a colleague's address and the allowlist matches it as that colleague.
+  //
+  // The previous version of this test checked `false` and `true` and stopped there, so it passed
+  // while ABSENT — the case that actually occurs — sailed through. Absent is the whole point:
+  // Supabase does not put this claim at the top level, so on the very provider this was written
+  // for, the guard never ran once.
+  for (const payload of [
+    without('email_verified'),
+    claims({ email_verified: false }),
+    claims({ email_verified: 'true' }), // a string is not an assertion
+    claims({ email_verified: 1 }),
+    claims({ email_verified: null }),
+    without('email_verified', { user_metadata: { email_verified: false } }),
+    without('email_verified', { user_metadata: {} }),
+    without('email_verified', { user_metadata: null }),
+  ]) {
+    const p = payload as Record<string, unknown>;
+    assert.equal(
+      reason(() => verifySessionToken(sign('HS256', payload), hmacConfig)),
+      'email not verified',
+      `accepted: email_verified=${JSON.stringify(p['email_verified'])} ` +
+        `user_metadata=${JSON.stringify(p['user_metadata'])}`,
+    );
+  }
+
+  // Accepted: an explicit true, at the top level or where Supabase actually puts it.
+  assert.ok(verifySessionToken(sign('HS256', claims({ email_verified: true })), hmacConfig));
+  assert.ok(
+    verifySessionToken(
+      sign('HS256', without('email_verified', { user_metadata: { email_verified: true } })),
+      hmacConfig,
+    ),
+  );
+});
+
+test('the unverified-email escape hatch works, and only when asked for by name', () => {
+  // It exists because a provider that verifies out of band may not say so in the token. It is off
+  // by default, and turning it on is a deliberate line in a config file rather than a default
+  // nobody chose.
+  const token = sign('HS256', without('email_verified'));
+  assert.equal(reason(() => verifySessionToken(token, hmacConfig)), 'email not verified');
+  assert.ok(verifySessionToken(token, { ...hmacConfig, allowUnverifiedEmail: true }));
+
+  // Not truthiness — the flag is checked against `true` exactly, so a stray string in a config
+  // file cannot switch off the front door's verification.
   assert.equal(
-    reason(() => verifySessionToken(sign('HS256', claims({ email_verified: false })), hmacConfig)),
+    reason(() => verifySessionToken(token, { ...hmacConfig, allowUnverifiedEmail: 'yes' as never })),
     'email not verified',
   );
-  assert.ok(verifySessionToken(sign('HS256', claims({ email_verified: true })), hmacConfig));
+});
+
+test('a kid naming an Object.prototype member is an unknown kid, not a crash', () => {
+  // `config.publicKeys[kid]` is a plain property read on an attacker-controlled string. Every one
+  // of these returns something non-undefined from the prototype chain, so a truthiness guard let
+  // them past and `createPublicKey` threw TypeError — which is not a SessionError, so it escaped
+  // the caller's mapping and surfaced as a 500 rather than a rejection.
+  for (const kid of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+    assert.equal(
+      reason(() => verifySessionToken(sign('RS256', claims(), { kid }), rsaConfig)),
+      'unknown kid',
+      `kid "${kid}" was not treated as unknown`,
+    );
+  }
+});
+
+test('a header or payload that is not an object is malformed, not a crash', () => {
+  // JSON.parse returns null, numbers, strings and arrays quite happily, and each one made the
+  // subsequent property read throw TypeError instead of SessionError.
+  const sig = 'x';
+  for (const part of ['null', '42', '"a string"', '[1,2,3]', 'true']) {
+    const enc = Buffer.from(part).toString('base64url');
+    const good = b64(claims());
+    assert.equal(reason(() => verifySessionToken(`${enc}.${good}.${sig}`, hmacConfig)), 'malformed');
+    assert.equal(
+      reason(() => verifySessionToken(`${b64({ alg: 'HS256' })}.${enc}.${sig}`, hmacConfig)),
+      // The payload is only decoded after the signature is checked, so a bad payload on a token
+      // that was never signed correctly fails on the signature first. Either is a clean rejection.
+      'signature',
+    );
+  }
 });
 
 test('missing sub or email is rejected', () => {

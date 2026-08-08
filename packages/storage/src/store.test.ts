@@ -464,13 +464,41 @@ test('the fallback ranks documents matching more terms first', async () => {
   const { store } = await freshStore();
   const scope = scopeFor(WS_A);
 
-  await store.upsert(scope, doc({ id: 'two' as DocId, externalId: 'a.md', title: 'Tenancy and retries' }));
-  await store.upsert(scope, doc({ id: 'one' as DocId, externalId: 'b.md', title: 'Retries only' }));
+  // The weaker match is deliberately the NEWER document, and that is the whole test.
+  //
+  // `ORDER BY rank DESC, updated_at DESC` has a recency tiebreaker, so when every row scores the
+  // same the result is simply newest-first. An earlier version of this test gave both documents the
+  // same `updatedAt`, which made the expected order reachable by accident — and it duly passed
+  // while the fallback ranked every row 0, because `ts_rank_cd` was being computed against the
+  // strict query that by definition none of these rows matched. Making recency actively disagree
+  // with relevance is what forces the assertion to be about ranking.
+  await store.upsert(
+    scope,
+    doc({
+      id: 'two' as DocId,
+      externalId: 'a.md',
+      title: 'Tenancy and retries',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    }),
+  );
+  await store.upsert(
+    scope,
+    doc({
+      id: 'one' as DocId,
+      externalId: 'b.md',
+      title: 'Retries only',
+      updatedAt: '2026-07-28T00:00:00.000Z',
+    }),
+  );
 
-  // No document has all three, so the loose form runs and ranking has to do the ordering.
+  // No document has all three terms, so the loose form runs and ranking has to do the ordering.
   const hits = await store.search(scope, 'tenancy retries zebrafish');
-  assert.equal(hits[0]?.id, 'two', 'the document matching two terms comes first');
   assert.equal(hits.length, 2);
+  assert.equal(hits[0]?.id, 'two', 'the document matching two terms comes first, despite being older');
+  assert.ok(
+    (hits[0]?.rank ?? 0) > 0,
+    'a fallback hit must carry a real score — a column of zeroes is not a ranking',
+  );
 });
 
 test('query punctuation and operators still cannot error', async () => {
