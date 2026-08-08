@@ -1,0 +1,113 @@
+/*
+ * screen-login — NO handoff exists for this screen.
+ *
+ * `design/handoff/` has three screens: Library, Import, Reader. A sign-in page was never drawn, so
+ * this is built entirely from existing tokens rather than invented values — the same rule that
+ * applies everywhere else (CLAUDE.md non-negotiable 2). Nothing here introduces a colour, size, or
+ * radius that is not already in `packages/tokens`. When this screen does get designed, the work is
+ * replacing this file, not unpicking hardcoded values from it.
+ */
+
+.page {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--main-padding);
+  background: var(--surface-page);
+}
+
+.card {
+  width: 100%;
+  max-width: var(--import-column-max);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  padding: var(--space-card-padding);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-card-gap);
+}
+
+.brand {
+  font-family: var(--font-ui);
+  font-size: var(--text-brand);
+  font-weight: 700;
+  color: var(--ink-title);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.title {
+  font-family: var(--font-ui);
+  font-size: var(--text-screen-title);
+  font-weight: 700;
+  color: var(--ink-title);
+}
+
+.subtitle {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  color: var(--ink-muted);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-filter-row-gap);
+}
+
+.label {
+  font-family: var(--font-ui);
+  font-size: var(--text-label);
+  color: var(--ink-section-label);
+}
+
+.input {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  color: var(--ink-control-text);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  padding: var(--space-cta-padding);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.button {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--ink-inverse);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-cta);
+  padding: var(--space-cta-padding);
+  cursor: pointer;
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.message {
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  color: var(--ink-body);
+}
+
+.error {
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  color: var(--source-claude-fg);
+}
+
+.note {
+  font-family: var(--font-ui);
+  font-size: var(--text-micro);
+  color: var(--ink-faint);
+}

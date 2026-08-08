@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import type { DocId } from '@strata/core';
 import { AppShell } from '../../../components/AppShell';
 import { ReaderScreen } from '../../../components/ReaderScreen';
-import { vault } from '../../../lib/vault';
+import { requireVault } from '../../../lib/vault';
 
 /**
  * screen-reader — design/handoff/README.md:27.
@@ -13,7 +13,7 @@ import { vault } from '../../../lib/vault';
  */
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { docs, sources, scope } = vault();
+  const { docs, sources, scope } = await requireVault();
 
   let doc;
   try {
