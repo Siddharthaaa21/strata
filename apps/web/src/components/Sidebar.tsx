@@ -48,7 +48,7 @@ import styles from './Sidebar.module.css';
 const NAV_ITEMS = [
   { label: 'Library', href: '/', built: true },
   { label: 'Import & Sources', href: '/import', built: true },
-  { label: 'Agent Access', href: '/agent-access', built: false },
+  { label: 'Agent Access', href: '/agent-access', built: true },
 ] as const;
 
 export function Sidebar() {

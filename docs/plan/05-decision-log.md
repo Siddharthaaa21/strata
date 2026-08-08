@@ -744,3 +744,59 @@ the id survives with its folder re-derived; delete one, and it is reported but u
 **Reversible?** The column and the flag, easily. The *rule* is the commitment: a content hash now
 carries identity weight at one moment in the pipeline, and anything that weakens the
 exactly-one-to-exactly-one condition trades a stated limit for silent wrong matches.
+
+## D21 — The screen that shows credentials, and what it is not allowed to show · 2026-08-09
+
+**Context.** M7's closing condition is "a user can see and revoke what each connected agent can
+reach." Every part of that has worked from a terminal since increment 1. The screen has no handoff
+design — `design/handoff/` covers Library, Import and Reader only — which is why it sat unbuilt
+while everything behind it was finished and proven.
+
+**The design decision is that there isn't one.** It borrows `screen-import`'s layout: single column,
+same max width, header → list → section label. Two screens invented in the same week should not also
+invent two layouts, and these are siblings in the information architecture — both are about
+connections rather than documents. Built from existing tokens only, like `/login`, so designing it
+properly later means replacing one CSS module.
+
+**Two rules did the actual work.**
+
+**1. No credential material reaches the browser.** `last4` and nothing else — not the hash, not the
+token id, not the presented string. Deciding whether a credential should keep existing needs a name,
+a reach, and a last-used, none of which authenticate anything. Enforced at the store rather than in
+the view: `listAgents` never selects `token_hash`, so a future component cannot render what was
+never fetched. A management UI able to display a secret is a way to leak one over a shoulder.
+
+**2. Reach is three cases and they stay distinct.** `sourceIds` NULL reaches every source, `[]`
+reaches none, a list reaches those. The `?? []` that looks like defensive coding renders the most
+powerful credential in the workspace as the most harmless one — a screen telling an operator not to
+bother revoking the thing they most need to revoke. Mutation-tested: introducing that exact `??`
+turns the suite red.
+
+**Revocation, and the three things that make it trustworthy rather than reassuring.**
+
+- **One statement, not two.** `SqlDriver` is a bare `query` and a `pg.Pool` can route two calls to
+  two connections, so there is no transaction holding a principal update and a token update
+  together. A failure between them leaves a revoked agent whose tokens still authenticate — exactly
+  the state this screen exists to make impossible.
+- **The token sweep is not gated on the principal update.** Revoking an already-revoked agent still
+  sweeps any surviving token. The repair path matters more than the tidy report, and an operator
+  clicking Revoke a second time is precisely someone trying to repair one.
+- **It reports what the database did.** D16's lesson, moved into the UI: an optimistic "revoked"
+  makes the operator stop looking while the credential is still live.
+
+**A POST through a server action, never a link.** A GET that revokes is revoked by a link
+prefetcher, a crawler, or a browser restoring tabs. `principalId` arrives from a browser and is a
+*selector, never an authorization* — scope is re-derived from the session cookie and the query is
+filtered by the workspace that comes back, so a crafted id from another workspace matches no row.
+The action lives in its own `'use server'` module because that directive publishes every export in
+its file.
+
+**Revoked agents stay on screen, greyed.** Deleting the row answers "did that actually work?" by
+removing the evidence, which is the one question this screen has to answer well.
+
+**Closed by exercising it.** The `Done when` names something user-visible, so per D17 it was closed
+by minting a throwaway agent, pressing Revoke in the browser, and confirming in the database that
+the principal and its token were both revoked — not by a green suite.
+
+**Reversible?** The layout, entirely. The two rules are not: relaxing either is how a management
+screen becomes a disclosure.

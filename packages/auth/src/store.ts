@@ -142,4 +142,61 @@ export interface AuthStore {
       readonly revokedAt?: string;
     }[]
   >;
+
+  /**
+   * Every non-human principal in a workspace, with what it can reach and when it was last used.
+   *
+   * What the Agent Access screen renders. Carries **no token material** — not the hash, not the
+   * full id, only `last4`, which is what an operator matches against the string they were shown
+   * once at creation. A screen that could display a credential is a screen that leaks one to
+   * whoever is standing behind you.
+   *
+   * `kind <> 'user'` rather than an allowlist of agent kinds: a kind added later is something this
+   * screen should show by default. Forgetting to add it here is how a credential becomes invisible,
+   * and invisible is the one state a revocation UI must never put a credential in.
+   */
+  listAgents(workspaceId: WorkspaceId): Promise<readonly AgentSummary[]>;
+
+  /**
+   * Revokes one agent and every token it holds, in one statement.
+   *
+   * Returns counts, not void, for the reason `removeMember` does (D16): revocation is the one
+   * operation where an optimistic message is worse than none. An operator who reads "revoked" stops
+   * looking, and if it did not happen the credential is still live.
+   *
+   * Idempotent — the predicates require `revoked_at IS NULL`, so revoking twice reports zero the
+   * second time rather than restamping and claiming it did something.
+   */
+  revokeAgent(workspaceId: WorkspaceId, principalId: PrincipalId, at: string): Promise<AgentRevocation>;
+}
+
+/** One row of the Agent Access screen. Deliberately contains nothing that could authenticate. */
+export interface AgentSummary {
+  readonly principalId: PrincipalId;
+  readonly kind: string;
+  readonly name: string;
+  readonly createdAt: string;
+  /** The member who created it, by email. Absent for agents minted before `--by` was required. */
+  readonly createdBy?: string;
+  readonly revokedAt?: string;
+  /**
+   * The sources this agent can reach, or `undefined` for **every source in the workspace**.
+   *
+   * `undefined` and `[]` are opposites and must never be collapsed: NULL is unnarrowed, `'{}'` is
+   * deny-all. Any `?? []` on this field turns "reaches everything" into "reaches nothing" on screen
+   * — a UI that tells an operator a credential is harmless when it holds the whole vault.
+   */
+  readonly sourceIds?: readonly string[];
+  readonly tokens: readonly {
+    readonly last4: string;
+    readonly createdAt: string;
+    readonly lastUsedAt?: string;
+    readonly expiresAt?: string;
+    readonly revokedAt?: string;
+  }[];
+}
+
+export interface AgentRevocation {
+  readonly principalsRevoked: number;
+  readonly tokensRevoked: number;
 }

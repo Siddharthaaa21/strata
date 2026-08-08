@@ -2,25 +2,57 @@
 id: screen-agent-access
 kind: screen
 title: Agent Access
-status: planned
+status: done
 owner: web
-spec: docs/plan/02-milestones.md
-depends_on: [svc-mcp, contract-source, comp-sidebar, dec-tenancy, contract-scope, dec-auth]
+spec: apps/web/src/components/AgentAccessScreen.tsx
+depends_on: [svc-mcp, contract-source, contract-agent-token, comp-sidebar, dec-tenancy, contract-scope, dec-auth, guarantee-access-log]
 ---
 
-Not designed. The prototype's third nav item is labelled "Agent Access" but routes to the reader —
-that is scaffolding, not a spec. The real screen manages MCP connections and per-agent scope,
-access log, and revocation.
+M7 increment 3. Built 2026-08-09; closes the milestone's "a user can see and revoke what each
+connected agent can reach."
 
-Member management ships as a CLI (`npm run member -- <list|add|remove> [email]`), not a screen, because
-increment 3 has no design (ADR 0006 §6b). The audience is a small team sharing one workspace; the operator
-workflow is more important than a UI invented under deadline.
+**No handoff design exists** — `design/handoff/` covers Library, Import and Reader only. Built
+entirely from existing [[tokens-color]] / [[tokens-type]] values, like [[screen-login]], so
+designing it later means replacing one CSS module rather than unpicking hardcoded values. The
+layout deliberately mirrors [[screen-import]]: single column, same max width, header → list →
+section label. Two screens invented in the same week should not also invent two layouts, and these
+are siblings in the IA — both are about connections rather than documents.
 
-`dec-tenancy` (R1) no longer blocks design: per-agent scope is a `Grant` narrowing by `sourceIds`
-within a workspace. `dec-auth` (R7) resolves the design-blocking question (ADR 0002 OPEN item 3):
-per-source narrowing is confirmed sufficient for M7 — doc-id allow-lists are rejected (invalid on
-each ingest run, unbounded, no operable UI). The constraint that closes design is the revocation
-promise: the Agent Access screen's copy sets the maximum legitimate Scope cache TTL (if it says
-immediate, the TTL is zero). Designed as part of dec-auth increment 3, not before.
+Everything it does has worked from a terminal since increment 1 (`agent:create`, `member remove`).
+This is the part a teammate can use. `mcp:smoke` already proves the property the copy promises: a
+revoked token fails on the next call, same connection, no restart.
 
-The access log this screen needs now exists as a data source (`AccessLog.recent`, guarantee-access-log), so increment 3 no longer has to design the table and the screen together. The screen itself still has no handoff design.
+**Two rules shape every line.**
+
+1. **No credential material reaches the browser.** `last4` and nothing else — not the hash, not the
+   token id, not the presented string. Deciding whether a credential should keep existing needs a
+   name, a reach, and a last-used, none of which authenticate anything. A management UI able to
+   display a secret is a way to leak one over a shoulder. Enforced at the store: `listAgents` never
+   selects `token_hash`.
+2. **Reach is three distinct cases and stays that way.** `sourceIds` NULL reaches every source,
+   `[]` reaches none, a list reaches those. The `?? []` that looks like defensive coding renders the
+   most powerful credential in the workspace as the most harmless one, so it appears nowhere on this
+   path — see [[contract-scope]].
+
+**Revocation** is a POST through a server action in its own `'use server'` module (that directive
+publishes every export in its file, so helpers must not share it). `principalId` comes from a
+browser and is a *selector, never an authorization*: the action re-derives scope from the session
+cookie and `revokeAgent` filters by the workspace that comes back, so a crafted id from another
+workspace matches no row. `window.confirm` before firing, because there is no undo and this screen
+has no design to borrow a modal from.
+
+The button reports **what the database did**, not what was intended — `revokeAgent` returns counts
+for the same reason `removeMember` does (D16). An optimistic "revoked" makes the operator stop
+looking while the credential is still live. Revoked agents stay on screen, greyed, because deleting
+the row answers "did that work?" by removing the evidence.
+
+Two findings are surfaced on the row itself rather than left for someone to deduce: an agent that
+has **never been used** (the easiest thing here to revoke safely), and an agent with **no recorded
+creator** — which cannot be swept up by removing a member, the exact gap `--by` was made mandatory
+to close.
+
+**Still deferred:** per-agent re-scoping (narrowing an existing grant from the UI) and the access
+log view. Both need [[guarantee-access-log]]'s data rendered as a screen, and re-scoping has a
+sharp edge worth designing rather than improvising — the one-active-grant index forces
+revoke-then-insert, which is how a token ends up pointing at a revoked grant. Member management
+stays a CLI (ADR 0006 §6b).

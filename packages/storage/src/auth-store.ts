@@ -508,6 +508,125 @@ export function createAuthStore(db: SqlDriver): AuthStore {
       }));
     },
 
+    /**
+     * Everything the Agent Access screen renders, in one query.
+     *
+     * Two joins rather than a query per agent: this is a page render, and a list that costs N+1
+     * round trips against a pooled connection is a page that gets slower exactly as the workspace
+     * accumulates the agents it most needs to show.
+     *
+     * `token_hash` is never selected. Nothing that could authenticate leaves this method — `last4`
+     * is what an operator matches against the string they were shown once, and it is useless to
+     * anyone who reads it over their shoulder.
+     */
+    async listAgents(workspaceId) {
+      const { rows } = await db.query<{
+        id: string;
+        kind: string;
+        display_name: string;
+        created_at: Date | string;
+        created_by_email: string | null;
+        revoked_at: Date | string | null;
+        source_ids: string[] | null;
+        tokens: unknown;
+      }>(
+        `SELECT p.id, p.kind, p.display_name, p.created_at, p.revoked_at,
+                -- The creator resolved to an address, because a principal UUID is not something an
+                -- operator can recognise as a colleague.
+                m.email AS created_by_email,
+                -- The ACTIVE grant. NULL source_ids means every source; '{}' means deny-all, and the
+                -- two must stay distinguishable all the way to the screen.
+                (SELECT g.source_ids FROM grants g
+                  WHERE g.workspace_id = p.workspace_id AND g.principal_id = p.id
+                    AND g.revoked_at IS NULL
+                  LIMIT 1) AS source_ids,
+                COALESCE((
+                  SELECT json_agg(json_build_object(
+                           'last4', t.last4,
+                           'createdAt', t.created_at,
+                           'lastUsedAt', t.last_used_at,
+                           'expiresAt', t.expires_at,
+                           'revokedAt', t.revoked_at
+                         ) ORDER BY t.created_at DESC)
+                    FROM agent_tokens t
+                   WHERE t.workspace_id = p.workspace_id AND t.principal_id = p.id
+                ), '[]'::json) AS tokens
+           FROM principals p
+           LEFT JOIN memberships m
+             ON m.workspace_id = p.workspace_id AND m.principal_id = p.created_by
+          WHERE p.workspace_id = $1 AND p.kind <> 'user'
+          ORDER BY p.revoked_at NULLS FIRST, p.created_at DESC`,
+        [workspaceId],
+      );
+
+      return rows.map((r) => {
+        const tokens = (r.tokens as {
+          last4: string;
+          createdAt: string;
+          lastUsedAt: string | null;
+          expiresAt: string | null;
+          revokedAt: string | null;
+        }[]) ?? [];
+
+        return {
+          principalId: r.id as PrincipalId,
+          kind: r.kind,
+          name: r.display_name,
+          createdAt: new Date(r.created_at).toISOString(),
+          ...(r.created_by_email === null ? {} : { createdBy: r.created_by_email }),
+          ...(r.revoked_at == null ? {} : { revokedAt: iso(r.revoked_at)! }),
+          // NOT `?? []`. NULL is "every source"; '{}' is deny-all. Collapsing them here would tell
+          // an operator that an unnarrowed credential reaches nothing.
+          ...(r.source_ids === null ? {} : { sourceIds: r.source_ids }),
+          tokens: tokens.map((t) => ({
+            last4: t.last4,
+            createdAt: new Date(t.createdAt).toISOString(),
+            ...(t.lastUsedAt == null ? {} : { lastUsedAt: iso(t.lastUsedAt)! }),
+            ...(t.expiresAt == null ? {} : { expiresAt: iso(t.expiresAt)! }),
+            ...(t.revokedAt == null ? {} : { revokedAt: iso(t.revokedAt)! }),
+          })),
+        };
+      });
+    },
+
+    /**
+     * One agent, and every token it holds, revoked in a single statement.
+     *
+     * The principal and its tokens must not be two statements: `SqlDriver` is a bare `query` and a
+     * `pg.Pool` can route two calls to two connections, so there is no transaction to hold them
+     * together. A failure between them leaves a revoked agent whose tokens still authenticate —
+     * which is precisely the state this screen exists to make impossible.
+     *
+     * `kind <> 'user'` in the predicate. A person is removed through membership, which also sweeps
+     * up the agents they created; letting this endpoint revoke a user principal would be a second,
+     * partial path to the same thing that skips the membership row.
+     */
+    async revokeAgent(workspaceId, principalId, at) {
+      const { rows } = await db.query<{ principals_revoked: string | number; tokens_revoked: string | number }>(
+        `WITH revoked_principal AS (
+           UPDATE principals SET revoked_at = $3
+            WHERE workspace_id = $1 AND id = $2 AND kind <> 'user' AND revoked_at IS NULL
+           RETURNING id
+         ), revoked_tokens AS (
+           -- Not gated on revoked_principal returning a row. Revoking an already-revoked agent must
+           -- still sweep any token that survived an earlier partial revocation — the repair path
+           -- matters more than the tidy report, and an operator re-clicking Revoke is exactly the
+           -- person trying to repair one.
+           UPDATE agent_tokens SET revoked_at = $3
+            WHERE workspace_id = $1 AND principal_id = $2 AND revoked_at IS NULL
+           RETURNING token_id
+         )
+         SELECT (SELECT count(*) FROM revoked_principal) AS principals_revoked,
+                (SELECT count(*) FROM revoked_tokens)    AS tokens_revoked`,
+        [workspaceId, principalId, at],
+      );
+
+      return {
+        principalsRevoked: Number(rows[0]?.principals_revoked ?? 0),
+        tokensRevoked: Number(rows[0]?.tokens_revoked ?? 0),
+      };
+    },
+
     /** Rate-limited in SQL so a burst of calls writes once, not once per call. */
     async touchToken(tokenId, at) {
       await db.query(

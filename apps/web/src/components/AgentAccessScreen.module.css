@@ -1,0 +1,161 @@
+/*
+ * screen-agent-access — NO handoff exists for this screen.
+ *
+ * `design/handoff/` covers Library, Import and Reader. Like `login`, this is built entirely from
+ * existing `packages/tokens` values; nothing here introduces a colour, size, or radius that is not
+ * already there. When it is designed, the work is replacing this file rather than unpicking
+ * hardcoded values from it.
+ *
+ * The layout deliberately mirrors screen-import: single column, same max width, header → list →
+ * section label. Two screens invented in the same week should not also invent two layouts, and
+ * this one is a sibling of Import in the information architecture — both are about connections
+ * rather than documents.
+ */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-import-section-gap);
+  max-width: var(--import-column-max);
+}
+
+.title {
+  font-size: var(--text-screen-title);
+  font-weight: 700;
+  color: var(--ink-title);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.subtitle {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  color: var(--ink-muted);
+}
+
+.sectionLabel {
+  font-family: var(--font-ui);
+  font-size: var(--text-label);
+  color: var(--ink-section-label);
+  margin-bottom: var(--space-filter-row-gap);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-filter-row-gap);
+}
+
+.agent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-card-gap);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  padding: var(--space-card-padding);
+}
+
+/* A revoked agent stays on the screen, greyed. Removing the row would answer "did that actually
+   work?" by making the evidence disappear — the one question a revocation UI must answer well. */
+.agentRevoked {
+  opacity: 0.6;
+}
+
+.agentHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-card-gap);
+}
+
+.name {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--ink-title);
+}
+
+.kind {
+  font-family: var(--font-ui);
+  font-size: var(--text-micro);
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-filter-row-gap);
+}
+
+.fact {
+  display: flex;
+  gap: var(--space-search-gap);
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+}
+
+.factLabel {
+  color: var(--ink-section-label);
+  flex: none;
+  min-width: 96px;
+}
+
+.factValue {
+  color: var(--ink-body);
+}
+
+/* Unnarrowed reach is stated in the same words everywhere and marked, because "every source in this
+   workspace" is the fact most worth noticing on this screen and it is otherwise a sentence among
+   sentences. */
+.factWide {
+  color: var(--ink-title);
+  font-weight: 600;
+}
+
+.button {
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--ink-inverse);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-cta);
+  padding: var(--space-cta-padding);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.note {
+  font-family: var(--font-ui);
+  font-size: var(--text-micro);
+  color: var(--ink-faint);
+}
+
+.empty {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  color: var(--ink-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  padding: var(--space-card-padding);
+}
+
+/* The token-id suffix an operator matches against the string they were shown at creation.
+   Padding reuses the reader's quote inset rather than inventing a value — this screen has no
+   handoff to cite, and CLAUDE.md's rule is that an uncited number does not get hardcoded. */
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--ink-body);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-control);
+  padding: var(--space-reader-quote-padding);
+}

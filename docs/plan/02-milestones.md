@@ -286,13 +286,29 @@ Audience decided 2026-08-04: a few teammates, one shared workspace (ADR 0006 sec
       makes that class of mistake a compile error. One way in per caller kind: sessions for people,
       tokens for agents and CLIs.
 
-**Increment 3 — the screen**
+**Increment 3 — the screen** `done`
 
-- [ ] Design it — no handoff exists for this screen
-- [ ] Per-agent scoping UI, connection management, access log (same table as ADR 0005 §5's
-      unimplemented response logging — design once, not twice)
+- [x] Designed from tokens alone — no handoff exists for this screen, so it borrows
+      `screen-import`'s layout rather than inventing a second one. Replacing one CSS module is the
+      whole cost of designing it properly later.
+- [x] Every credential in the workspace, what it reaches in words, when it was last used, and
+      `last4`. **No credential material reaches the browser** — `listAgents` never selects
+      `token_hash`, and the three reach cases (every source / deny-all / a list) stay distinct,
+      because a `?? []` renders the most powerful credential as the most harmless.
+- [x] Revocation as a POST through a server action, confirmed before it fires, reporting the count
+      the DATABASE returned rather than an optimistic "revoked" (D16's lesson in the UI). Principal
+      and tokens revoked in ONE statement — two would leave a revoked agent whose tokens still
+      authenticate. Nine tests, four guards mutation-verified; proven live by revoking a throwaway
+      agent through the button.
+- [x] Two findings surfaced on the row rather than left to be deduced: an agent that has **never
+      been used**, and an agent with **no recorded creator** — which removing a member cannot sweep
+      up, the exact gap `--by` was made mandatory to close.
+- [ ] **Carried out:** per-agent re-scoping from the UI, and the access log rendered as a screen.
+      Re-scoping has a sharp edge worth designing rather than improvising — the one-active-grant
+      index forces revoke-then-insert, which is how a token ends up pointing at a revoked grant.
 
-**Done when** a user can see and revoke what each connected agent can reach.
+**Done when** a user can see and revoke what each connected agent can reach. — **Met 2026-08-09**,
+by opening the page and revoking a real agent through it, not by a passing test suite (D17).
 
 Until increment 1 lands, **there is still no authentication**, and that is the honest status
 regardless of increment 0 being green.
