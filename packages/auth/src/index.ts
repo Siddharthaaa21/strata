@@ -42,8 +42,15 @@ export class AuthError extends Error {
 export interface Authenticator {
   /** Verifies a presented agent token and mints a request `Scope`. */
   scopeFromAgentToken(presented: string): Promise<Scope>;
-  /** Turns a verified provider session into a request `Scope`, gated on workspace membership. */
-  scopeFromSession(claims: SessionClaims): Promise<Scope>;
+  /**
+   * Turns a verified provider session into a request `Scope` for ONE named workspace, gated on
+   * membership of that workspace.
+   *
+   * The workspace is a parameter because it is the caller's context — a host name, a route
+   * segment, a configured id — and never something a token should get to choose. Letting the
+   * store pick meant it picked arbitrarily.
+   */
+  scopeFromSession(workspaceId: WorkspaceId, claims: SessionClaims): Promise<Scope>;
 }
 
 /**
@@ -107,7 +114,8 @@ export function createAuthenticator(store: AuthStore, now: () => Date = () => ne
      * so signature checking lives with the provider integration and this function stays
      * provider-agnostic and testable without one.
      */
-    async scopeFromSession(claims) {
+    async scopeFromSession(workspaceId, claims) {
+      if (typeof workspaceId !== 'string' || workspaceId === '') throw new AuthError('malformed');
       if (
         typeof claims?.email !== 'string' ||
         typeof claims.subject !== 'string' ||
@@ -120,7 +128,7 @@ export function createAuthenticator(store: AuthStore, now: () => Date = () => ne
 
       // An authenticated stranger is still a stranger. A provider will happily sign in anyone with
       // a Google account; not being on the allowlist is the common case, not an error condition.
-      const row = await store.resolveSession({
+      const row = await store.resolveSession(workspaceId, {
         provider: claims.provider,
         subject: claims.subject,
         email: claims.email.trim().toLowerCase(),

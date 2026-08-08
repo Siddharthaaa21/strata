@@ -38,6 +38,22 @@ export interface NewMember {
   readonly invitedBy?: PrincipalId;
 }
 
+/** What `removeMember` actually did, so the caller never has to guess. */
+export interface RemovalReport {
+  /** The person, plus every agent or service principal attributable to them. */
+  readonly principalsRevoked: number;
+  readonly tokensRevoked: number;
+  /**
+   * Live agents in the workspace with no `created_by`, which no removal can ever sweep up.
+   *
+   * Surfaced because it is invisible everywhere else and it is precisely the gap that makes a
+   * removal incomplete. A non-zero value here means "this person may still have access through an
+   * agent nobody can attribute to them" — an operator can act on that; a silent zero-effect
+   * revocation is one they cannot.
+   */
+  readonly unattributedAgents: number;
+}
+
 export interface NewAgent {
   readonly workspaceId: WorkspaceId;
   readonly displayName: string;
@@ -71,14 +87,21 @@ export interface AuthStore {
   lookupToken(tokenId: string): Promise<AuthLookup | undefined>;
 
   /**
-   * Resolves a verified session to a principal, or `undefined` if the address is not a member.
+   * Resolves a verified session to a principal in ONE named workspace, or `undefined`.
    *
    * Creates the principal, its grant, and the identity link on FIRST sign-in — but only for an
    * address already on the allowlist. A provider will happily authenticate anyone with a Google
    * account; membership is what decides whether that person gets a workspace, and it is ours to
    * decide, not the provider's.
+   *
+   * `workspaceId` is a parameter rather than something the implementation discovers. Without it the
+   * lookup was `WHERE email = $1` across every workspace, taking whichever row the planner returned
+   * first — so a person in two workspaces landed in an arbitrary one that could change between
+   * requests, and a single revoked row was enough to lock out an active member. Neither is
+   * something a caller could work around, because there was nowhere to say which workspace was
+   * meant.
    */
-  resolveSession(claims: SessionClaims): Promise<AuthLookup | undefined>;
+  resolveSession(workspaceId: WorkspaceId, claims: SessionClaims): Promise<AuthLookup | undefined>;
 
   /**
    * Creates a principal, its single active grant, and its first token, atomically.
@@ -102,8 +125,12 @@ export interface AuthStore {
    * Revokes the person's principal and every token it owns in the same statement, because a
    * membership that is revoked while its agent tokens keep working is not revoked. Never deletes:
    * the access log has to stay attributable.
+   *
+   * Returns counts rather than void so the caller can report what happened instead of asserting
+   * what is meant to happen. Revocation is the one operation where an optimistic message is worse
+   * than no message: the operator stops looking, and the credential is still live.
    */
-  removeMember(workspaceId: WorkspaceId, email: string): Promise<void>;
+  removeMember(workspaceId: WorkspaceId, email: string): Promise<RemovalReport>;
 
   /** For the operator CLI. Never exposed over MCP — it is a list of people, not of documents. */
   listMembers(workspaceId: WorkspaceId): Promise<

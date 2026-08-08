@@ -53,11 +53,38 @@ function loadRootEnv() {
  */
 const globalForPool = globalThis as unknown as { strataPool?: pg.Pool };
 
+/**
+ * Pool size is a function of where this runs, and the serverless answer is small.
+ *
+ * `max: 4` is right for one long-lived server. On Vercel it is wrong in a way that only shows up
+ * under load: every serverless instance gets its OWN pool, so the real ceiling is
+ * `max × concurrent instances`, and a platform that scales out on demand will happily create more
+ * instances than a free-tier pooler has connections. The failure is not a slow page — it is
+ * `remaining connection slots are reserved`, which looks like the database being down.
+ *
+ * One connection per instance, because a single request handled by one instance cannot use two.
+ * Throughput comes from the platform running more instances, which is the model Vercel is built
+ * around; holding spare connections open per instance buys nothing and costs the shared budget.
+ *
+ * The transaction-mode pooler (Supabase port 6543) is what makes this safe — it multiplexes many
+ * short-lived client connections onto few Postgres backends. Pointing this at the direct port 5432
+ * instead would exhaust the database's own limit no matter what this number says.
+ *
+ * `idleTimeoutMillis` matters for the same reason: an instance frozen between requests should not
+ * hold a connection it is not using.
+ */
+const SERVERLESS = process.env['VERCEL'] === '1' || process.env['AWS_LAMBDA_FUNCTION_NAME'] !== undefined;
+
 function pool(): pg.Pool {
   loadRootEnv();
   globalForPool.strataPool ??= new pg.Pool({
     connectionString: requireConnectionString(process.env),
-    max: 4,
+    max: SERVERLESS ? 1 : 4,
+    idleTimeoutMillis: SERVERLESS ? 10_000 : 30_000,
+    // A hung connect should fail the request rather than hold the instance open until the platform
+    // kills it — on a paused free-tier project, that is the difference between a fast error and a
+    // timeout.
+    connectionTimeoutMillis: 10_000,
   });
   return globalForPool.strataPool;
 }

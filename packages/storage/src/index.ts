@@ -501,9 +501,15 @@ export function createDocStore(db: SqlDriver): DocStore {
         //
         // The `strict` CTE is the AND result. `EXISTS (SELECT 1 FROM strict)` picks which predicate
         // the outer query uses, so precision is preserved whenever precision is available and the
-        // fallback only ever runs when the alternative was zero rows. Ranking is unchanged and does
-        // the rest: `ts_rank_cd` scores a document matching both terms above one matching either,
-        // so the OR results arrive in the order a reader would want them.
+        // fallback only ever runs when the alternative was zero rows.
+        //
+        // Ranking then does the rest — but only because it ranks against the query that actually
+        // matched. Scoring the fallback rows against `strict_q` gave every one of them rank 0, since
+        // rank 0 is precisely what "did not match the AND query" means, and the fallback exists for
+        // rows that did not. `ORDER BY rank DESC` over a column of zeroes silently degrades to the
+        // tiebreaker, so the fallback returned newest-first: the exact opposite of the sentence
+        // above, and wrong in the case that matters most, because a two-word search that falls back
+        // is when the reader most needs the document matching both words at the top.
         `WITH q AS (
            SELECT websearch_to_tsquery('english', $2) AS strict_q,
                   -- OR form of the same terms. plainto_tsquery gives '&'-joined lexemes after the
@@ -516,14 +522,19 @@ export function createDocStore(db: SqlDriver): DocStore {
               AND ($3::text[] IS NULL OR source_id = ANY($3::text[]))
               AND search_vector @@ q.strict_q
             LIMIT 1
+         ), chosen AS (
+           -- Resolved ONCE, then used for both the predicate and the ranking. Computing the CASE
+           -- twice would let the two drift apart again, which is the whole defect: the filter and
+           -- the score have to be about the same query.
+           SELECT (CASE WHEN EXISTS (SELECT 1 FROM strict) THEN q.strict_q ELSE q.loose_q END) AS tsq
+             FROM q
          )
          SELECT d.id, d.source_id, d.title, d.excerpt, d.folder, d.tags, d.updated_at,
-                ts_rank_cd(d.search_vector, q.strict_q) AS rank
-           FROM docs d, q
+                ts_rank_cd(d.search_vector, c.tsq) AS rank
+           FROM docs d, chosen c
           WHERE d.workspace_id = $1
             AND ($3::text[] IS NULL OR d.source_id = ANY($3::text[]))
-            AND d.search_vector @@ (CASE WHEN EXISTS (SELECT 1 FROM strict)
-                                         THEN q.strict_q ELSE q.loose_q END)
+            AND d.search_vector @@ c.tsq
           ORDER BY rank DESC, d.updated_at DESC
           LIMIT $4`,
         [filter.workspaceId, query, sourceIds === undefined ? null : [...sourceIds], capped],

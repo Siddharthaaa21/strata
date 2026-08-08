@@ -279,8 +279,21 @@ overclaiming D13 was written about.
 previously gated four. Held complete by `packages/storage/src/grant-completeness.test.ts`, which
 enumerates the live store surface and fails on any method with no declared narrowing behavior.
 
-Increments 1 (agent tokens on stdio), 2 (human sessions), 3 (the Agent Access screen) are open.
-Until 1 lands, **there is still no authentication** — `localDevScope` is still the only path.
+Increment 1 (agent tokens on stdio) landed. Increment 2 (human sessions) is code-complete except
+the provider itself; increment 3 (the Agent Access screen) is open and has no design.
+
+**Round-five review, 2026-08-08 (D16).** The membership and session layer — written fast to unblock
+increment 2, and the least-reviewed code in the repo — was reviewed independently and had three HIGH
+findings, all of them checks that appeared to run and did not: session resolution unscoped to a
+workspace, `user_identities` written and never read (so an invitation could be claimed by any
+credential presenting the address), and `email_verified` failing open on an absent claim, which is
+the normal case on Supabase because the flag lives in `user_metadata`. Plus a revocation the CLI
+reported and never performed. All fixed and mutation-verified.
+
+None was exploitable when found: `vault()` still uses `localDevScope` and no production path calls
+`scopeFromSession`. **That is the pattern to notice, not a reassurance** — code that nothing calls
+yet gets reviewed as though it were inert, and then goes live all at once when the last wire is
+connected. The fixes landed before the provider, deliberately.
 
 ---
 

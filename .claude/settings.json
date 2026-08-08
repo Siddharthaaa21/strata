@@ -22,7 +22,16 @@
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(git push -u origin m*:*)",
-      "Bash(git push origin m*:*)"
+      "Bash(git push origin m*:*)",
+      "Bash(git worktree list:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(npx vercel whoami:*)",
+      "Bash(npx vercel link:*)",
+      "Bash(npx vercel project ls:*)",
+      "Bash(npx vercel env ls:*)"
     ],
     "deny": [
       "Read(./.env)",
