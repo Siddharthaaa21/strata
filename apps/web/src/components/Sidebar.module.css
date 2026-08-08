@@ -166,6 +166,15 @@
   background: var(--surface-raised);
 }
 
+/* A nav row whose screen does not exist yet (M7 increment 3). Existing tokens only — no new colour
+   is introduced to say "unfinished", because `--ink-faint` already means exactly that everywhere
+   else in the app. `cursor: default` overrides `.navItem`'s pointer: a pointer on something that
+   cannot be clicked is the whole lie, in miniature. */
+.navItemUnbuilt {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
 .navDot {
   width: var(--size-nav-dot);
   height: var(--size-nav-dot);

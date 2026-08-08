@@ -31,10 +31,24 @@ import styles from './Sidebar.module.css';
  * and whose handoff copy ("Priya Shah", "4 agents connected") is placeholder. Both are tracked as
  * real items now rather than as a note in a closed bullet.
  */
+/**
+ * `built: false` means the destination does not exist yet, and the item renders as a disabled row
+ * rather than a link.
+ *
+ * Agent Access is M7 increment 3 and has no design. Until this flag existed the nav linked to it
+ * anyway and returned a **404** — the one control in the app that lied about itself. Everything
+ * else already declares its own state: `Connect` / `Upload` carry `aria-disabled`, and "Ask agent
+ * about this" is a real disabled button (R8). A 404 from primary navigation reads as a broken app,
+ * not as an unfinished one, and those are very different messages to send someone.
+ *
+ * The item STAYS, greyed, rather than being deleted: three nav items is the handoff's information
+ * architecture, and dropping one to hide unfinished work is fidelity drift that would have to be
+ * undone. Flip `built` when the screen lands; nothing else changes.
+ */
 const NAV_ITEMS = [
-  { label: 'Library', href: '/' },
-  { label: 'Import & Sources', href: '/import' },
-  { label: 'Agent Access', href: '/agent-access' },
+  { label: 'Library', href: '/', built: true },
+  { label: 'Import & Sources', href: '/import', built: true },
+  { label: 'Agent Access', href: '/agent-access', built: false },
 ] as const;
 
 export function Sidebar() {
@@ -94,6 +108,24 @@ export function Sidebar() {
         <div className={styles.navList}>
           {NAV_ITEMS.map((item) => {
             const active = item.href === '/' ? pathname === '/' : pathname?.startsWith(item.href);
+
+            // Not a `Link` with an onClick guard — a `Link` that cannot be followed is still a link
+            // to a keyboard, a screen reader, and a middle click. The element itself has to be the
+            // thing that is not navigable.
+            if (!item.built) {
+              return (
+                <span
+                  key={item.href}
+                  className={`${styles.navItem} ${styles.navItemUnbuilt}`}
+                  aria-disabled="true"
+                  title="Not built yet"
+                >
+                  <span className={styles.navDot} />
+                  {item.label}
+                </span>
+              );
+            }
+
             return (
               <Link
                 key={item.href}

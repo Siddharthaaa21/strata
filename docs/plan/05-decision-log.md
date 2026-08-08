@@ -686,3 +686,61 @@ exhaust.
 **Reversible?** The logging, trivially. The `?reason=` vocabulary is public copy — adding a code that
 distinguishes members from non-members would undo ADR 0006 §5, so the three that exist are the three
 there should be.
+
+## D20 — A document's life after its file moves · 2026-08-09
+
+**Context.** ADR 0003 chose the file path as identity and wrote the cost down honestly: *"a file
+rename is currently a delete-plus-create — the old `DocId` (and anything later attached to it) is
+lost."* Routed to R5, and left there for two milestones.
+
+Reading it again with real data in the vault, "named property, not an oversight" is doing a lot of
+work. The behaviour was **data corruption on an ordinary action**. Reorganise a folder, re-ingest,
+and every `import_events` row, access-log entry, and agent reference pointing at the moved documents
+is orphaned while the documents themselves appear twice. Deleting a file did nothing at all, so the
+vault only ever grew. The Import screen was already showing the symptom — the same titles listed
+twice — and it read as a display quirk.
+
+**The reframing that unlocked it.** The original rejection table treats this as a binary: path
+identity breaks on a move, content-hash identity breaks on an edit, pick your poison. It is not
+binary. **Identity stays the path; the content hash becomes evidence used at exactly one moment —
+deciding what a disappearance means.** An edit is still an update, because the path did not move. A
+disappearance is now a question with three possible answers rather than one assumed one.
+
+**The decision, and the three places it is deliberately timid:**
+
+- **A move keeps the `DocId`** — matched when exactly one vanished document and exactly one arriving
+  file share a content hash. Then the ordinary write runs, because `folder`, `tags`, and the search
+  vector are all derived *from the path*. That second half is not a detail: I shipped the relocate
+  without it and a test caught a document moved from `Architecture/` to `Design/` still filed under
+  `Architecture` — offering a Library filter pill for a directory that no longer existed. Identical
+  bytes do not mean nothing changed.
+- **Ambiguity is left alone.** Two files with the same hash is ordinary — empty files, copied
+  templates, generated stubs. A wrong match rewrites one document's identity to another's path
+  silently, which is strictly worse than the bug being fixed. Where it cannot tell, it does what it
+  did before.
+- **Deletion is proposed always and performed only on `--prune`.** `externalId` is relative to the
+  scanned root, so ingesting a subfolder produces a run where nearly every stored document is
+  legitimately unseen. On by default, one narrower-than-usual command empties the vault and prints
+  success. So the missing list prints on every run — a dry run nobody opts into — and the flag is
+  what acts.
+
+**Tombstone, not `DELETE`.** `import_events.doc_id` and `access_log.doc_ids` point at these rows,
+and an audit trail that loses entries when the thing they describe is removed has lost them exactly
+when someone needs to ask what happened. A mis-scoped prune is then recoverable by clearing one
+column. And a returning file reclaims its original id.
+
+That last case is the one that breaks a naive implementation, and it is worth naming because nothing
+about it looks like an edge: restore a pruned file unchanged, and its content hash still matches, so
+the ordinary comparison says `unchanged`, nothing is written, and the row stays tombstoned while the
+run reports the file as present. A tombstoned prior therefore forces `changed`.
+
+**Verification.** Nine tests against real Postgres via PGlite, and the five load-bearing guards were
+each mutation-tested — removing the tombstone-forces-rewrite rule, letting prune delete renamed
+documents, allowing an ambiguous match, dropping `deleted_at` from the search filter, and skipping
+the re-derive after a relocate all turn the suite red. Then proven live end to end: move a file, and
+the id survives with its folder re-derived; delete one, and it is reported but untouched until
+`--prune`; restore it, and the same id comes back.
+
+**Reversible?** The column and the flag, easily. The *rule* is the commitment: a content hash now
+carries identity weight at one moment in the pipeline, and anything that weakens the
+exactly-one-to-exactly-one condition trades a stated limit for silent wrong matches.

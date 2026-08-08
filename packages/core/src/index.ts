@@ -282,8 +282,15 @@ export interface ImportEvent {
    * into a tool description or an MCP response.
    */
   readonly externalId?: string;
-  /** `skipped-duplicate` is a normal outcome — idempotent re-import is the design, not a fault. */
-  readonly status: 'imported' | 'updated' | 'skipped-duplicate' | 'failed';
+  /**
+   * `skipped-duplicate` is a normal outcome — idempotent re-import is the design, not a fault.
+   *
+   * `deleted` records that a document was withdrawn because its file is gone from the source. It is
+   * its own status rather than a `failed` with a code, because nothing failed: the source is the
+   * authority on what exists, and it said this no longer does. Recording it as a failure would put
+   * a red row in the audit trail for the most ordinary act in a document collection.
+   */
+  readonly status: 'imported' | 'updated' | 'skipped-duplicate' | 'failed' | 'deleted';
   /** `message` is sanitized. It must never echo raw ingested content back into a log or a UI. */
   readonly error?: { readonly code: string; readonly message: string };
   readonly occurredAt: string;

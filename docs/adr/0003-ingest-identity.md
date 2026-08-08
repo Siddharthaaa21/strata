@@ -144,8 +144,76 @@ only, and the blast radius is bounded almost entirely by there being no real dat
 3. **Write authorization is unmodeled.** Reusing `Grant`/`Scope` (read-narrowing) to gate an import
    is a deliberate under-approximation. "Which principals may import into which sources" is routed
    to R7/M7.
-4. **Renames, moves, and deletes.** Path-identity makes a rename destructive; a deleted file has no
-   tombstone. Routed to R5 as a named open item; the deletion half additionally blocks on M4.
+4. ~~**Renames, moves, and deletes.**~~ **RESOLVED 2026-08-09 — see the amendment below (D20).**
 5. **No `normalizerVersion` field.** `mode: 'reprocess'` gives a manual backfill path, but nothing
    records which normalizer version produced a stored doc. Routed to `svc-storage` (M4) — decide it
    there, alongside storage's own reasons for wanting one, rather than widening `Doc` pre-emptively.
+
+---
+
+## Amendment — 2026-08-09: the lifecycle of a path-identified document (closes open item 4)
+
+Path identity was chosen with its cost stated plainly: *"a file rename is currently a
+delete-plus-create — the old `DocId` (and anything later attached to it) is lost."* That was
+accurate, and it was a **data-corrupting default**, not a cosmetic one. Every re-ingest of a
+reorganised folder orphaned ids that `import_events`, the access log, and any agent that had ever
+referenced a document were still pointing at, and left the document present twice. A deleted file
+had no tombstone at all, so the vault only ever grew.
+
+The original rejection table asked whether identity should be the path or the content hash and found
+both wanting — the path breaks on a move, the hash breaks on an edit. **The amendment is that the
+choice was never binary.** Identity stays the path, so an edit is still an update. The content hash
+becomes evidence used at one specific moment: deciding what a *disappearance* means.
+
+### Rules
+
+**A move is a relocate, then the ordinary write.** When a stored document's path is no longer on
+disk and exactly one newly-seen file carries its content hash, the document is moved to the new path
+keeping its `DocId`. It then goes through `upsert` as normal, because `folder`, `tags`, and the
+search vector are all *derived from the path* — relocating without re-deriving files a document
+under a directory that no longer exists, and the Library's filter pills are built from that column.
+Byte-identical content does not mean nothing changed.
+
+**Ambiguity is never resolved by guessing.** A hash must correspond to exactly one unseen document
+*and* exactly one arriving file. Identical files are ordinary — empty files, copied templates,
+generated stubs — and a wrong match silently rewrites one document's identity to another's path. Two
+candidates is not a puzzle for a heuristic; it is a case to leave alone, where the cost is the old
+behaviour rather than a corrupted link. A rename whose content also changed is therefore not
+detected, which is a real limit and a deliberate one: similarity scoring over bodies buys a maybe in
+exchange for a class of confident mistakes.
+
+**Deletion is proposed on every run and performed only on request.** `externalId` is relative to the
+scanned root, so ingesting a *subfolder* produces a run in which nearly every stored document is
+legitimately unseen. With pruning on by default, one narrower-than-usual command empties the vault
+and prints success. So the missing-file list is always computed and printed — a dry run nobody has
+to opt into — and `--prune` is what acts on it. A warning that only appears after you have already
+opted into deletion is not a warning.
+
+**Deletion is a tombstone.** `docs.deleted_at`, filtered out of every read path — `search`, `list`,
+`count`, `folders`, `get` — and deliberately *not* filtered out of `findKnown`. Three reasons it is
+soft: `import_events.doc_id` and `access_log.doc_ids` point here, and an audit trail that loses rows
+when the thing they describe is removed has lost them exactly when someone needs it; a mis-scoped
+prune is recoverable by clearing one column instead of by re-importing; and a file that comes back
+resurrects its original document rather than minting a second one against the identity constraint.
+
+The restore case is the one that breaks a naive implementation: the content hash still matches, so
+the ordinary comparison says `unchanged`, nothing is written, and the row stays tombstoned while the
+run reports the file as present. A tombstoned prior therefore forces `changed`.
+
+### Migration risk, revised
+
+**Low.** Additive: one nullable column, one partial index, three store methods, one new
+`ImportEvent.status`. No stored row needs rewriting — an existing vault has `deleted_at IS NULL`
+everywhere, which is exactly right. `known` is optional on `runIngest`, so a caller that cannot
+supply the inventory keeps the previous behaviour rather than getting an error, and — importantly —
+an absent inventory is never read as "every document is missing."
+
+### Rejected
+
+| Alternative | Why not |
+| --- | --- |
+| Hard `DELETE` | Orphans or cascades the audit trail, and loses the id a returning file should reclaim. |
+| Prune on by default | One ingest of a subfolder empties the vault and reports success. |
+| Similarity scoring to catch edited-and-moved files | Trades a known limit for a class of confident wrong matches; a bad match is worse than the bug. |
+| A `renamed` status on `ImportEvent` | The audit trail's question is "did this document change" — yes. Which path it moved from belongs on the decision, not in a new wire value every consumer must learn. |
+| `relocate` as a flag on `upsert` | They conflict on different keys: `upsert` resolves on `(workspace, source, externalId)`, and a rename's new path has no row, so it would INSERT and collide on the PRIMARY KEY. |

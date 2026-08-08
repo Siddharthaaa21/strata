@@ -85,6 +85,17 @@ console.log(`Scanning ${target}`);
 const { pending, failures } = await scanMarkdown(createNodeFileSystemPort(), target, sourceId);
 console.log(`  ${pending.length} ingestible file(s), ${failures.length} skipped or failed`);
 
+// The identity inventory for this source. Ingest needs it to reason about the files the scan did
+// NOT find: a stored path with no file is either a rename (same bytes turned up elsewhere) or a
+// deletion. Cheap — three columns, no bodies.
+const known = await docs.listKnown(scope, sourceId);
+
+// --prune is opt-in, and it must stay that way. `externalId` is relative to the scanned root, so
+// pointing this at a subfolder produces a run where nearly every stored document is legitimately
+// unseen. On by default, one narrower-than-usual command would empty the vault and print success.
+const prune = process.argv.includes('--prune');
+
+const now = new Date().toISOString();
 const result = await persistIngest(
   scope,
   docs,
@@ -95,8 +106,11 @@ const result = await persistIngest(
     failures,
     lookup: storeLookup(scope, docs),
     reprocess: process.argv.includes('--reindex'),
-    now: new Date().toISOString(),
+    known,
+    prune,
+    now,
   }),
+  now,
 );
 
 // Every event, including failures — storing only successes makes partial-sync bugs invisible.
@@ -104,9 +118,29 @@ await events.append(scope, result.events);
 
 console.log(
   `\nnew ${result.counts.new}  changed ${result.counts.changed}  ` +
-    `unchanged ${result.counts.unchanged}  failed ${result.counts.failed}`,
+    `renamed ${result.counts.renamed}  unchanged ${result.counts.unchanged}  ` +
+    `deleted ${result.deleted}  failed ${result.counts.failed}`,
 );
 console.log(`written ${result.written}, skipped ${result.skipped}`);
+
+// The moves, named. "renamed 3" tells an operator a number; these tell them whether the pipeline
+// matched the files they actually moved — the only way to notice a wrong match while it is still
+// one command to undo.
+for (const d of result.decisions) {
+  if (d.outcome === 'renamed') console.log(`  moved  ${d.previousExternalId}  ->  ${d.pending.externalId}`);
+}
+
+// Deletions are reported whether or not they were applied. Without --prune this is the whole
+// value: it tells the operator what a prune WOULD remove, before they run one.
+if (result.deletions.length > 0) {
+  console.log(
+    prune
+      ? `\nTombstoned ${result.deleted} document(s) whose files are gone:`
+      : `\n${result.deletions.length} stored document(s) have no file. Re-run with --prune to remove them:`,
+  );
+  for (const d of result.deletions.slice(0, 20)) console.log(`  ${d.externalId}`);
+  if (result.deletions.length > 20) console.log(`  ... and ${result.deletions.length - 20} more`);
+}
 
 if (result.counts.failed) {
   console.log('\nSkipped or failed:');
