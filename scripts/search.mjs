@@ -7,8 +7,8 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { localDevScope } from '@strata/auth';
 import { createDocStore, fromPoolLike, requireConnectionString } from '@strata/storage';
+import { cliScope } from './lib/cli-scope.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 for (const line of (() => {
@@ -30,15 +30,17 @@ if (!query) {
   process.exit(1);
 }
 
-const workspaceId = process.env['STRATA_WORKSPACE_ID'];
-if (!workspaceId) {
-  console.error('STRATA_WORKSPACE_ID is not set.');
-  process.exit(1);
-}
-
 const pool = new pg.Pool({ connectionString: requireConnectionString(process.env), max: 2 });
-const store = createDocStore(fromPoolLike(pool));
-const hits = await store.search(localDevScope({ workspaceId }), query);
+const db = fromPoolLike(pool);
+
+// Verified against the database, like every other caller. The workspace comes from the token, so
+// STRATA_WORKSPACE_ID is not read here — two sources of truth that must agree can disagree.
+//
+// This is the debugging view of what an agent receives, so it should see exactly what an agent
+// sees: a token narrowed to one source returns results from that source only, which is the point.
+const scope = await cliScope(db);
+const store = createDocStore(db);
+const hits = await store.search(scope, query);
 
 console.log(`"${query}" -> ${hits.length} result(s)\n`);
 for (const h of hits) {

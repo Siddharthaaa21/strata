@@ -196,6 +196,8 @@ stand-in for a real one.
       transport against real Postgres (PGlite): 8 tests
 - [x] Verified against a live database — `npm run mcp:smoke` spawns the real server and drives it
       with a real MCP client over stdio. `.mcp.json` wires it into Claude Code with no secrets.
+- [x] `packages/auth` is no longer a stub. `localDevScope` is deleted (M7 increment 2); every
+      caller presents a credential that is verified against the database. Original entry follows.
 - [ ] `packages/auth` is a development stub — `localDevScope` is not authentication. Real
       per-connection principals are M7 (R7)
 - [x] Red-team pass on injection — 9 hostile documents through the real route (`injection.test.ts`)
@@ -250,8 +252,9 @@ need it.
 - [x] Proven live: `npm run mcp:smoke` mints an ephemeral agent, drives the real server over stdio,
       then revokes mid-connection and asserts the next call returns `Unauthorized`. Revocation is
       immediate with no restart — which is the property the Agent Access screen will promise.
-- [ ] CLI scripts (`ingest`, `search`) still use `localDevScope`; they move to `STRATA_CLI_TOKEN`
-      with increment 2, when that function is deleted.
+- [x] CLI scripts (`ingest`, `search`) moved to `STRATA_CLI_TOKEN` — the same verified path the MCP
+      server uses, via `scripts/lib/cli-scope.mjs`. The workspace comes from the token, so
+      `STRATA_WORKSPACE_ID` is no longer read by either.
 
 **Increment 2 — human sessions** `in progress`
 
@@ -272,9 +275,12 @@ Audience decided 2026-08-04: a few teammates, one shared workspace (ADR 0006 sec
       an unconfigured provider throws rather than quietly serving an open mode.
 - [ ] Supabase Auth **proven against a live project** — the only piece needing credentials, and the
       one thing that could not be tested without them
-- [ ] `localDevScope` deleted. Unreachable from the web app now, but `scripts/ingest.mjs` and
-      `scripts/search.mjs` still call it, so the function still exists. They move to
-      `STRATA_CLI_TOKEN` and then it goes.
+- [x] `localDevScope` **deleted**, not merely unused. It was honestly labelled "not
+      authentication" for its whole life, and that is exactly why labelling was not enough: at a
+      call site, a function that fabricates authority is indistinguishable from one that checks it
+      — both hand back a `Scope`. Every caller had to be trusted rather than verified. Deleting it
+      makes that class of mistake a compile error. One way in per caller kind: sessions for people,
+      tokens for agents and CLIs.
 
 **Increment 3 — the screen**
 

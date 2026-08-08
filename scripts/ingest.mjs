@@ -12,7 +12,6 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { localDevScope } from '@strata/auth';
 import {
   createDocStore,
   createEventStore,
@@ -21,6 +20,7 @@ import {
   migrate,
   requireConnectionString,
 } from '@strata/storage';
+import { cliScope } from './lib/cli-scope.mjs';
 import {
   createNodeFileSystemPort,
   persistIngest,
@@ -59,17 +59,15 @@ const target = resolve(process.cwd(), folder);
 const sourceId = arg('--source-id', 'src-markdown');
 const sourceName = arg('--name', 'Local Markdown');
 
-const workspaceId = process.env['STRATA_WORKSPACE_ID'];
-if (!workspaceId) {
-  console.error('STRATA_WORKSPACE_ID is not set. See .env.example.');
-  process.exit(1);
-}
-
 const pool = new pg.Pool({ connectionString: requireConnectionString(process.env), max: 4 });
 const db = fromPoolLike(pool);
 await migrate(db);
 
-const scope = localDevScope({ workspaceId });
+// Verified against the database, not fabricated from an env var. The workspace comes from the
+// token, so STRATA_WORKSPACE_ID is no longer read here — one source of truth, as with the MCP
+// server. NOTE this is a WRITE path: increment 0 made Grant.sourceIds gate writes too, so a token
+// narrowed away from the target source will be refused rather than silently writing nothing.
+const scope = await cliScope(db);
 const docs = createDocStore(db);
 const sources = createSourceStore(db);
 const events = createEventStore(db);

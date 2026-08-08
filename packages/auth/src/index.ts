@@ -5,13 +5,15 @@
  * `@strata/core/scope-internal` and a `post-edit` hook rejects an import of it from anywhere except
  * this package. Everything downstream — storage, MCP, the web app — takes a `Scope` as a parameter.
  *
- * STATUS: no real authentication exists yet (R7, M7). What is here is a single deliberately
- * labelled development path, so that adding real auth later is a change *inside* this package
- * rather than a change to every caller.
+ * STATUS: authentication is real, and there is exactly one way in per caller kind. Agents and the
+ * local CLIs present a token (`scopeFromAgentToken`); people present a verified provider session
+ * (`scopeFromSession`), gated on workspace membership. `localDevScope` — the labelled development
+ * stub that fabricated a scope from an environment variable — is deleted; see the note at the foot
+ * of this file for why deleting it mattered more than labelling it.
  */
 
 import { mintScope } from '@strata/core/scope-internal';
-import type { GrantId, PrincipalId, Scope, SourceId, WorkspaceId } from '@strata/core';
+import type { Scope, WorkspaceId } from '@strata/core';
 import { parseAgentToken, secretMatches } from './tokens.ts';
 import type { AuthStore, SessionClaims } from './store.ts';
 
@@ -148,34 +150,21 @@ export function createAuthenticator(store: AuthStore, now: () => Date = () => ne
   };
 }
 
-export interface LocalScopeOptions {
-  readonly workspaceId: WorkspaceId;
-  /** Absent means every source in the workspace. Present-but-empty means deny-all. */
-  readonly sourceIds?: readonly SourceId[];
-}
-
-/**
- * A `Scope` for local, single-user development. **Not authentication.**
+/*
+ * `localDevScope` was here, and is deliberately gone (M7 increment 2).
  *
- * Anything able to start the process gets this workspace: there is no credential, no verification,
- * and no revocation path. Acceptable for a local vault on one machine; not acceptable for anything
- * shared or hosted. Replacing this with a per-connection authenticated principal is M7.
+ * It minted a `Scope` from an environment variable: no credential, no verification, no revocation.
+ * It was honestly labelled "**Not authentication**" for its whole life, and that labelling is
+ * exactly why it had to be deleted rather than left. At a call site, a function that fabricates
+ * authority is indistinguishable from one that checks it — `localDevScope({ workspaceId })` and
+ * `scopeFromAgentToken(token)` both hand back a `Scope`. Which one a given line called was a fact
+ * about that line, not a fact the type system or a reviewer could see at a glance.
  *
- * Mint per request. Never cache the result — a cached `Scope` is a `Grant` revocation that silently
- * does not take effect.
+ * So every caller had to be trusted rather than verified, permanently, and the one that eventually
+ * shipped to production would look like all the others. Deleting it makes that class of mistake a
+ * compile error.
+ *
+ * Callers now: the web app uses a verified session (`apps/web/src/lib/vault.ts`), the MCP server
+ * and the CLIs use agent tokens (`scripts/lib/cli-scope.mjs`). One way in.
  */
-export function localDevScope(options: LocalScopeOptions): Scope {
-  const principalId = 'local-user' as PrincipalId;
-  const grant = {
-    id: 'local-grant' as GrantId,
-    workspaceId: options.workspaceId,
-    principalId,
-    createdAt: new Date(0).toISOString(),
-    ...(options.sourceIds === undefined ? {} : { sourceIds: options.sourceIds }),
-  };
 
-  return mintScope(
-    { id: principalId, kind: 'user', workspaceId: options.workspaceId },
-    grant,
-  );
-}
