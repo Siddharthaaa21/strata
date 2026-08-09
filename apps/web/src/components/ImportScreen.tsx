@@ -10,13 +10,30 @@ import styles from './ImportScreen.module.css';
  * header → connector list → "Recent imports", the last deliberately flat (no card, no status pill,
  * no source badge — README:24).
  *
- * Connectors that have never been connected are not in the database, so the four the handoff shows
+ * Connectors that have never been connected are not in the database, so the rows the handoff shows
  * are merged in as not-connected placeholders. That keeps the screen honest: it advertises what
  * Strata could connect to, while only reporting real status for what actually exists.
+ *
+ * **The handoff draws four identical rows. They are three different mechanisms, and one of them
+ * cannot exist (D22).** Verified rather than assumed:
+ *
+ *   - GitHub has a documented, authenticated API. A real connector.
+ *   - Claude has NO API. Export is a manual act producing an emailed link that expires in 24 hours.
+ *     It is an import — the user drops a file — so the row must not say "Connect".
+ *   - Cursor has no official export at all. Its chats live in undocumented SQLite blobs that
+ *     already broke once (Cursor 3.0, April 2026). Not being built; the row is gone rather than
+ *     greyed, because a disabled row still advertises an intention.
+ *
+ * Four `Connect` links promising one mechanism for three is the same defect as the Agent Access nav
+ * item that returned a 404: a control describing a capability the system does not have.
  */
 const PLACEHOLDER_CONNECTORS = [
-  { id: 'src-claude', kind: 'claude', name: 'Claude', description: 'Syncs research threads and project docs.' },
-  { id: 'src-cursor', kind: 'cursor', name: 'Cursor', description: 'Pulls implementation plans from your repos.' },
+  {
+    id: 'src-claude',
+    kind: 'claude',
+    name: 'Claude',
+    description: 'Import a Claude data export — Settings → Privacy → Export data.',
+  },
   { id: 'src-github', kind: 'github', name: 'GitHub', description: 'Indexes READMEs, ADRs, and PR descriptions.' },
   { id: 'src-markdown', kind: 'markdown', name: 'Local Markdown', description: 'Drag in .md files or folders from anywhere.' },
 ] as const;

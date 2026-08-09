@@ -2,7 +2,7 @@
   "name": "strata",
   "version": "0.0.0",
   "private": true,
-  "description": "AI engineering workspace — searchable knowledge base for humans and agents",
+  "description": "AI engineering workspace \u2014 searchable knowledge base for humans and agents",
   "engines": {
     "node": ">=22"
   },
@@ -25,7 +25,8 @@
     "mcp:smoke": "node scripts/mcp-smoke.mjs",
     "agent:create": "node scripts/agent-create.mjs",
     "member": "node scripts/member.mjs",
-    "dev:local": "STRATA_DEV_AUTH=1 npm run dev"
+    "dev:local": "STRATA_DEV_AUTH=1 npm run dev",
+    "ingest:claude": "node scripts/ingest-claude.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

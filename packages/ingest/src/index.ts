@@ -52,5 +52,8 @@ export interface IngestOutcome {
 
 export * from './fs-port.ts';
 export * from './markdown.ts';
+// The Claude export adapter deliberately does NOT implement `SourceAdapter` above — there is no API
+// to page through, so the interface would describe nothing. See D22 and `adapter-claude`.
+export * from './claude.ts';
 export * from './pipeline.ts';
 export * from './persist.ts';

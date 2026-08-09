@@ -33,3 +33,21 @@ The slot merge takes `kind` from the LIVE source when one is present, not from t
 `name` and `status` from the live row while keeping the slot's `kind` let a markdown source sitting
 on the `src-claude` id render with Claude's badge and colours — reading, at a glance, as a connected
 Claude account.
+
+**The four connector rows are three mechanisms, and one of them cannot exist (D22, R5).** Verified
+2026-08-09 rather than assumed, and the row list changed as a result:
+
+| Row | Mechanism | Label |
+| --- | --- | --- |
+| GitHub | Documented, authenticated API | `Connect` |
+| Claude | **No API.** Manual export; emailed link expiring in 24h | `Import` |
+| Local Markdown | A folder you point at | `Upload` |
+| ~~Cursor~~ | No official export; undocumented SQLite that already broke once | **Removed** |
+
+`Connect` implies an authenticated, ongoing sync. That is true of GitHub and false of the other two,
+so one label for all of them promised a capability two sources will never have — the same defect as
+the [[comp-sidebar]] nav item that returned a 404, and the same fix: say what the thing actually is.
+
+Cursor's row is **deleted rather than greyed**. A disabled row still advertises an intention, and
+there is no intention here: see D22 for why "best effort with a version check" was rejected.
+[[adapter-claude]] is built and imports through the same pipeline as [[adapter-markdown]].

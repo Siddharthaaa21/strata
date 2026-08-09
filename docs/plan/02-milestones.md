@@ -178,10 +178,19 @@ stand-in for a real one.
       path-derived field; a vanished file is reported on every run and removed only under
       `--prune`; deletion is a tombstone, so the audit trail survives and a returning file
       reclaims its original document. Nine tests, five guards mutation-verified, proven live.
-- [ ] Claude and Cursor adapters
-- [ ] GitHub adapter — ships **not connected** by default
-- [ ] Fixture-based tests per adapter; no live network in tests — ADR 0003 specifies an injected
-      filesystem port for exactly this
+- [x] **Claude — built as an IMPORT, not a connector** (R5, D22). There is no Claude API: export is
+      a manual act producing an emailed link that expires in 24 hours. Identity is the conversation
+      `uuid`, which is the best identifier in this codebase — it never moves, so a rename is an
+      update with none of D20's hash-matching machinery. 19 tests, six guards mutation-verified.
+      `npm run ingest:claude -- <conversations.json>`.
+- [x] ~~Cursor adapter~~ — **not being built** (D22). No official export; chats live in undocumented
+      SQLite blobs that already broke once (Cursor 3.0, April 2026). "Best effort with a version
+      check" was rejected: the failure arrives on an update the user did not know was significant,
+      and they blame Strata.
+- [ ] GitHub adapter — ships **not connected** by default. The only true connector of the four.
+- [x] Fixture-based tests per adapter; no live network in tests — ADR 0003 specifies an injected
+      filesystem port for exactly this. The Claude adapter takes text rather than a port: it is one
+      file a user hands us, not a tree to walk, and a port there would be ceremony around readFile.
 
 **Done when** a real folder of Markdown ingests, dedupes on re-run, and appears in the Library.
 
