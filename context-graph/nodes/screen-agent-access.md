@@ -51,8 +51,25 @@ has **never been used** (the easiest thing here to revoke safely), and an agent 
 creator** — which cannot be swept up by removing a member, the exact gap `--by` was made mandatory
 to close.
 
-**Still deferred:** per-agent re-scoping (narrowing an existing grant from the UI) and the access
-log view. Both need [[guarantee-access-log]]'s data rendered as a screen, and re-scoping has a
-sharp edge worth designing rather than improvising — the one-active-grant index forces
-revoke-then-insert, which is how a token ends up pointing at a revoked grant. Member management
-stays a CLI (ADR 0006 §6b).
+**Recent activity — [[guarantee-access-log]] finally reaching a human.** ADR 0005 §5 admits in its
+own Open items that fencing reduces injection's likelihood and blast radius without eliminating it,
+and names logging as the compensating control for the remainder. So an injection that *succeeds* is
+discovered here or not at all. The table has been collected since M6 and read by nobody.
+
+Two rules carried over from the log itself:
+
+- **A count of documents, never their ids or titles.** The log's first rule is that it never holds
+  content; a view resolving logged doc ids back to titles would reconstruct — inside the screen
+  built for incident response — exactly what the table refuses to store.
+- **Failed authentications are counted, not listed.** `recent()` filters on `workspace_id`, and a
+  call that failed to authenticate has none — so the rows the schema calls "the point" were
+  unreachable by the only reader it had. `unattributedFailures` closes that, as a **count**: those
+  entries have no workspace, so there is no honest answer to whose they are, and attributing them to
+  whichever workspace happens to be looking would invent one. A count says "something is knocking"
+  without claiming to know on whose door.
+
+**Still deferred:** per-agent re-scoping (narrowing an existing grant from the UI). It has a sharp
+edge worth designing rather than improvising — the one-active-grant index forces revoke-then-insert,
+and `agent_tokens` carries a composite foreign key requiring a token's grant to belong to its own
+principal, so the token's `grant_id` has to move in the same statement or the write is rejected.
+Member management stays a CLI (ADR 0006 §6b).

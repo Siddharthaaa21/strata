@@ -18,6 +18,7 @@ import pg from 'pg';
 import { AuthError, createAuthenticator } from '@strata/auth';
 import type { PrincipalId, Scope, SourceId, WorkspaceId } from '@strata/core';
 import {
+  createAccessLog,
   createAuthStore,
   createDocStore,
   createEventStore,
@@ -374,6 +375,76 @@ export async function loadAgentAccess(): Promise<{
               : a.sourceIds.map((id) => nameOf.get(id as SourceId) ?? id).join(', '),
       };
     }),
+  };
+}
+
+export interface AccessEvent {
+  readonly id: string;
+  readonly at: string;
+  /** The agent's display name, or `undefined` when the call authenticated as nobody. */
+  readonly actor?: string;
+  readonly tool: string;
+  readonly outcome: string;
+  readonly documents: number;
+}
+
+/** How far back the activity view looks. */
+const ACTIVITY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Recent MCP activity, for the Agent Access screen.
+ *
+ * This is ADR 0005 §5's compensating control finally reaching a human. The ADR admits fencing
+ * reduces injection's likelihood and blast radius without eliminating it, and names logging as what
+ * covers the remainder — so an injection that SUCCEEDS is discovered here or not at all. It has
+ * been collected since M6 and, until now, read by nobody.
+ *
+ * Principal ids are resolved to agent names, because a UUID cannot be recognised as "the thing on
+ * my laptop" by the person deciding whether to revoke it.
+ *
+ * `unattributedFailures` is returned separately and counted rather than listed — those rows have no
+ * workspace, so there is no honest answer to whose they are. See the store method.
+ */
+export async function loadActivity(limit = 50): Promise<{
+  events: AccessEvent[];
+  unattributedFailures: number;
+  windowDays: number;
+}> {
+  await requireVault();
+  loadRootEnv();
+  const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId;
+
+  const db = fromPoolLike(pool());
+  const log = createAccessLog(db);
+  const auth = createAuthStore(db);
+
+  const since = new Date(Date.now() - ACTIVITY_WINDOW_MS).toISOString();
+  const [rows, agents, unattributedFailures] = await Promise.all([
+    log.recent(workspaceId, limit),
+    auth.listAgents(workspaceId),
+    log.unattributedFailures(since),
+  ]);
+
+  const nameOf = new Map(agents.map((a) => [a.principalId as string, a.name]));
+
+  return {
+    windowDays: Math.round(ACTIVITY_WINDOW_MS / (24 * 60 * 60 * 1000)),
+    unattributedFailures,
+    events: rows.map((r) => ({
+      id: r.id,
+      at: r.occurredAt,
+      // A principal we cannot name is left unnamed rather than shown as its id. The id means
+      // nothing to a reader, and a revoked-and-deleted principal legitimately has no name.
+      ...(r.principalId === undefined || !nameOf.has(r.principalId)
+        ? {}
+        : { actor: nameOf.get(r.principalId)! }),
+      tool: r.tool,
+      outcome: r.outcome,
+      // A COUNT, never the ids or the titles. The log's first rule is that it never holds content,
+      // and a screen that resolves logged doc ids back to titles would reconstruct, in a view built
+      // for incident response, exactly what the table refuses to store.
+      documents: r.docIds.length,
+    })),
   };
 }
 
