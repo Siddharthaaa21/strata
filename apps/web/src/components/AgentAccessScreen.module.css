@@ -159,3 +159,71 @@
   border-radius: var(--radius-control);
   padding: var(--space-reader-quote-padding);
 }
+
+/* Recent MCP activity — ADR 0005 §5's compensating control, finally rendered. */
+.activity {
+  display: flex;
+  flex-direction: column;
+}
+
+.event {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-search-gap);
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  color: var(--ink-body);
+  padding: var(--space-recent-import-row-padding);
+  border-bottom: 1px solid var(--border-card);
+}
+
+.eventTime {
+  color: var(--ink-faint);
+  flex: none;
+  min-width: 84px;
+}
+
+.eventActor {
+  color: var(--ink-title);
+  font-weight: 600;
+  flex: none;
+}
+
+/* A call that authenticated as nobody. Not styled as an error — a single one is ordinary; the
+   signal is a stream of them, which is what the banner above the list counts. */
+.eventAnon {
+  color: var(--ink-faint);
+  font-style: italic;
+  flex: none;
+}
+
+.eventTool {
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+}
+
+.eventOutcome {
+  margin-left: auto;
+  flex: none;
+  color: var(--ink-muted);
+}
+
+.eventFailed {
+  margin-left: auto;
+  flex: none;
+  color: var(--source-claude-fg);
+  font-weight: 600;
+}
+
+/* The probing signal. Deliberately loud, and deliberately a count rather than rows — those entries
+   have no workspace, so there is no honest answer to whose they are. */
+.warning {
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  color: var(--source-claude-fg);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  padding: var(--space-card-padding);
+  margin-bottom: var(--space-filter-row-gap);
+}

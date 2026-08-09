@@ -31,9 +31,12 @@ const adminDb = fromPoolLike(pool);
 await migrate(adminDb);
 
 const authStore = createAuthStore(adminDb);
+
+// A fresh principal per run, named for what it is. It is NOT deleted afterwards — see the cleanup
+// at the foot of this file for why that mattered.
 const smokeAgent = await authStore.createAgent({
   workspaceId: process.env['STRATA_WORKSPACE_ID'],
-  displayName: 'mcp:smoke (ephemeral)',
+  displayName: `mcp:smoke ${new Date().toISOString().slice(0, 10)}`,
   kind: 'service',
 });
 
@@ -135,16 +138,27 @@ try {
   });
 } finally {
   await client.close().catch(() => {});
-  // Revoked above, but revocation is not deletion — clean up the throwaway principal entirely so
-  // repeated runs do not accumulate dead agents in the Agent Access list.
+
+  // REVOKED, not deleted. This used to delete the principal, its grant and its tokens outright.
+  //
+  // The stated reason was that repeated runs would otherwise accumulate dead agents in the Agent
+  // Access list. Real concern, wrong fix: it broke an invariant the store states in `removeMember`
+  // — *never delete, the access log has to stay attributable*. Every call this test made was logged
+  // against a principal id the cleanup then removed, so Recent activity showed a column of
+  // `unknown` actors. An audit trail losing attribution retroactively is the one thing it must
+  // never do, and the deletion was doing it on every run.
+  //
+  // What accumulates now is a dated, revoked row per run, in a section of the screen that exists to
+  // show exactly that. Honest history reads better than a clean list that quietly erased it.
   await adminDb
-    .query('DELETE FROM agent_tokens WHERE principal_id = $1', [smokeAgent.principalId])
+    .query('UPDATE agent_tokens SET revoked_at = now() WHERE principal_id = $1 AND revoked_at IS NULL', [
+      smokeAgent.principalId,
+    ])
     .catch(() => {});
   await adminDb
-    .query('DELETE FROM grants WHERE principal_id = $1', [smokeAgent.principalId])
-    .catch(() => {});
-  await adminDb
-    .query('DELETE FROM principals WHERE id = $1', [smokeAgent.principalId])
+    .query('UPDATE principals SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [
+      smokeAgent.principalId,
+    ])
     .catch(() => {});
   await pool.end().catch(() => {});
 }

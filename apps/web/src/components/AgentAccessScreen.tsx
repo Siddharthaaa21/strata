@@ -1,5 +1,5 @@
 import { relativeTime } from '../lib/relative-time';
-import { loadAgentAccess } from '../lib/vault';
+import { loadActivity, loadAgentAccess } from '../lib/vault';
 import { RevokeButton } from './RevokeButton';
 import styles from './AgentAccessScreen.module.css';
 
@@ -24,7 +24,7 @@ import styles from './AgentAccessScreen.module.css';
  *    in the workspace as the most harmless one.
  */
 export async function AgentAccessScreen() {
-  const { agents } = await loadAgentAccess();
+  const [{ agents }, activity] = await Promise.all([loadAgentAccess(), loadActivity()]);
   const active = agents.filter((a) => a.revokedAt === undefined);
   const revoked = agents.filter((a) => a.revokedAt !== undefined);
 
@@ -71,6 +71,58 @@ export async function AgentAccessScreen() {
           </div>
         </div>
       )}
+
+      <div>
+        <h2 className={styles.sectionLabel}>Recent activity</h2>
+
+        {/*
+          ADR 0005 §5's compensating control, finally reaching a human. The ADR admits in its own
+          Open items that fencing reduces injection's likelihood and blast radius without
+          eliminating it, and names logging as what covers the remainder — so an injection that
+          SUCCEEDS is discovered here or not at all. Collected since M6, read by nobody until now.
+        */}
+        {activity.unattributedFailures > 0 && (
+          <p className={styles.warning}>
+            {activity.unattributedFailures} call{activity.unattributedFailures === 1 ? '' : 's'} in
+            the last {activity.windowDays} days failed to authenticate at all. A few is ordinary — a
+            stream is what a credential being probed looks like. These cannot be attributed to a
+            workspace or an agent, so they are counted rather than listed.
+          </p>
+        )}
+
+        {activity.events.length === 0 ? (
+          <div className={styles.empty}>
+            No agent has called this workspace in the last {activity.windowDays} days.
+          </div>
+        ) : (
+          <div className={styles.activity}>
+            {activity.events.map((e) => (
+              <div key={e.id} className={styles.event}>
+                <span className={styles.eventTime}>{relativeTime(e.at)}</span>
+                {e.actor === undefined ? (
+                  // A call that authenticated as nobody, or as a principal that no longer exists.
+                  // Shown as unknown rather than as a raw id: the id means nothing to a reader.
+                  <span className={styles.eventAnon}>unknown</span>
+                ) : (
+                  <span className={styles.eventActor}>{e.actor}</span>
+                )}
+                <span className={styles.eventTool}>{e.tool}</span>
+                <span className={e.outcome === 'ok' ? styles.eventOutcome : styles.eventFailed}>
+                  {/*
+                    A COUNT of documents, never their ids or titles. The log's first rule is that it
+                    never holds content; a view that resolved logged doc ids back to titles would
+                    reconstruct — inside the screen built for incident response — precisely what the
+                    table refuses to store.
+                  */}
+                  {e.outcome === 'ok'
+                    ? `${e.documents} document${e.documents === 1 ? '' : 's'}`
+                    : e.outcome}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

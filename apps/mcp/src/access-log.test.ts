@@ -160,6 +160,7 @@ test('a broken log cannot break the tool surface', async () => {
     log: {
       record: () => Promise.reject(new Error('the log is on fire')),
       recent: () => Promise.reject(new Error('the log is on fire')),
+      unattributedFailures: () => Promise.reject(new Error('the log is on fire')),
     },
   });
   const client = new Client({ name: 'audit', version: '1.0.0' }, { capabilities: {} });
@@ -188,4 +189,37 @@ test('docIdsIn collects doc_id keys and never a value', async () => {
   assert.deepEqual(docIdsIn({ nested: { deep: { doc_id: 'c' } } }), ['c']);
   assert.deepEqual(docIdsIn({ doc_id: 42 }), [], 'a non-string doc_id is not an id');
   assert.deepEqual(docIdsIn('a bare string'), []);
+});
+
+test('a failed authentication is counted, and recent() cannot see it', async () => {
+  // The rows the schema comment calls "the point" — a stream of them is what a credential being
+  // probed looks like — and for the whole of M6 they were unreachable by the table's only reader.
+  // `recent` filters on workspace_id and a call that failed to authenticate has none.
+  const db = new PGlite() as unknown as SqlDriver;
+  await migrate(db);
+  const log = createAccessLog(db);
+
+  await log.record({ tool: 'search_docs', outcome: 'Unauthorized' });
+  await log.record({ tool: 'get_doc', outcome: 'Unauthorized' });
+  await log.record({ workspaceId: WS, principalId: 'p1' as PrincipalId, tool: 'search_docs', outcome: 'ok' });
+
+  assert.equal(
+    (await log.recent(WS)).length,
+    1,
+    'recent() still shows only the attributable call — that is why the count exists',
+  );
+  assert.equal(await log.unattributedFailures(new Date(0).toISOString()), 2);
+});
+
+test('the failure count respects its window', async () => {
+  const db = new PGlite() as unknown as SqlDriver;
+  await migrate(db);
+  const log = createAccessLog(db);
+  await log.record({ tool: 'search_docs', outcome: 'Unauthorized' });
+
+  // A window that starts after the event must not include it — otherwise "12 in the last 7 days"
+  // is really "12 ever", and the number stops meaning anything the day it stops going up.
+  const future = new Date(Date.now() + 60_000).toISOString();
+  assert.equal(await log.unattributedFailures(future), 0);
+  assert.equal(await log.unattributedFailures(new Date(Date.now() - 60_000).toISOString()), 1);
 });
