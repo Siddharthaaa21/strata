@@ -800,3 +800,60 @@ the principal and its token were both revoked — not by a green suite.
 
 **Reversible?** The layout, entirely. The two rules are not: relaxing either is how a management
 screen becomes a disclosure.
+
+## D22 — Three connectors, three different mechanisms, one costume · 2026-08-09
+
+**Context.** R5 has carried one open question since M5 was designed: *are Claude and Cursor exports
+accessible at all without scraping?* The register said "verify before committing to adapter scope —
+the answer may be GitHub only." Nobody verified, and M5's remaining scope sat as three
+interchangeable checkboxes: "Claude and Cursor adapters", "GitHub adapter".
+
+Verified now, and the checkboxes were the wrong shape. The handoff draws four identical rows with a
+`Connect` link. Behind them are **three incompatible mechanisms**, and the row that looks the same
+as the others is the one that cannot exist.
+
+| | What exists | What that makes it |
+| --- | --- | --- |
+| GitHub | Documented, versioned, authenticated REST API | A connector |
+| Claude | Settings → Privacy → Export data. Emailed link, expires in 24h, interactive sign-in required, **no API** | A file drop |
+| Cursor | Nothing official. SQLite key-value blobs in the user's app-support directory | A reverse-engineered read |
+
+**Claude has no connector-shaped surface, and that is not a gap to work around.** Export is manual,
+the delivery is an email link that expires in twenty-four hours, and downloading it requires an
+interactive signed-in browser session. There is no OAuth, no pagination, no incremental sync — the
+four things `SourceAdapter` was designed around. Building it as a "connector" would mean building a
+credential store, a refresh loop, and a sync schedule around a thing a human does by hand once. It
+is an **import**: the user drops the export, we ingest it.
+
+That is a better fit than it sounds. Conversation `uuid` is a genuinely stable identity — strictly
+better than the Markdown adapter's path identity, which is what D20 spent today repairing.
+
+**Cursor is not being built, and the reason is a date.** Cursor **3.0, April 2026**, shipped a
+breaking one-way database migration: per-workspace indexes became a global one,
+`composer.composerData` became `composer.composerHeaders`, and messages moved out of a
+`conversationMap` field into individual `bubbleId:` entries. The format is undocumented, it carries
+no compatibility promise, and **it has already broken once within the last four months**.
+
+*Rejected: best-effort with a version check that fails loudly.* It sounds responsible and it is
+worse than nothing here. The failure does not arrive when we ship — it arrives on a Cursor update
+the user did not know was significant, in a product whose entire proposition is that their knowledge
+is findable. The moment it matters most is the moment it breaks, and they will reasonably blame
+Strata. A connector we cannot keep working is a promise we cannot keep.
+
+*Rejected: reading it anyway because tools exist that do.* Third-party tools reverse-engineer this
+successfully. They are also single-purpose, break openly, and have no obligation to a user's vault.
+We would be inheriting their maintenance burden and their breakage while carrying a durability
+promise they never made.
+
+**Consequences.**
+
+- M5's scope is **Claude as an import, GitHub as the only true connector, Cursor not at all**.
+- `SourceAdapter`'s fetch/pagination shape is right for GitHub and wrong for Claude. Claude does not
+  need it, so it does not get one — an adapter interface bent to accommodate a mechanism it does not
+  describe is how the abstraction stops meaning anything.
+- **The Import screen has to stop lying.** Four identical `Connect` rows advertise one mechanism for
+  three, and one of the three will never exist. This is the same class of defect as the Agent Access
+  nav item that 404'd: a control that describes a capability the system does not have.
+
+**Reversible?** The Claude and GitHub decisions, easily. Cursor is reversible the day Cursor
+publishes a supported export — which is the condition to revisit on, not elapsed time.

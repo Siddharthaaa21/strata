@@ -38,7 +38,20 @@ export function ConnectorRow({ source }: { source: ConnectorInfo }) {
   const kind = source.kind as SourceKind;
   const tint = sourceTint[kind];
   const connected = source.status === 'connected';
-  const label = kind === 'markdown' ? 'Upload' : connected ? 'Connected' : 'Connect';
+  // The label states the MECHANISM, not one word for all of them (D22).
+  //
+  // `Connect` implies an authenticated, ongoing sync. That is true of GitHub and false of the other
+  // two: Markdown is a folder you point at, and Claude has no API at all — its export is a manual
+  // act producing a link that expires in 24 hours. Labelling all three `Connect` promises a
+  // capability for two sources that will never have it, and the person who clicks expecting an
+  // OAuth screen is owed better than a control that does nothing.
+  const label = connected && kind !== 'markdown' && kind !== 'claude'
+    ? 'Connected'
+    : kind === 'markdown'
+      ? 'Upload'
+      : kind === 'claude'
+        ? 'Import'
+        : 'Connect';
   const color = connected && kind !== 'markdown' ? statusColor.connected : accent.default;
 
   return (

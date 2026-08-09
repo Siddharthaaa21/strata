@@ -251,8 +251,28 @@ and a file that returns resurrects its original document. The matching rule is d
 one unseen document and one arriving file must share a hash, or nothing is matched — because a wrong
 match is worse than the bug. Nine tests, all five guards mutation-verified, proven live end to end.
 
-**Still open under R5:** whether Claude and Cursor exports are accessible at all without scraping.
-Verify before committing to adapter scope — the answer may be "GitHub only."
+**Connector reality: SETTLED 2026-08-09 (D22).** The open question was whether Claude and Cursor
+exports are reachable without scraping. Answered, and the answer is that **the four connector rows
+in the handoff are three different kinds of thing wearing one costume.**
+
+| | What actually exists | Verdict |
+| --- | --- | --- |
+| **GitHub** | Documented, versioned, authenticated REST API | A real connector. The only one. |
+| **Claude** | Settings → Privacy → Export data. Emailed link, **expires in 24 hours**, requires an interactive sign-in, **no API of any kind** | A **file drop**, not a connection. Buildable, and honest as an import. |
+| **Cursor** | No official export. Chats live in SQLite `state.vscdb` key-value blobs under the user's application-support directory | Reverse-engineered, undocumented — and **already broken once**. |
+| **Local Markdown** | A folder | Built (M5). |
+
+The Cursor finding is the decisive one. Cursor **3.0 (April 2026) shipped a breaking, one-way
+database migration**: storage moved from per-workspace indexes to a global one, `composer.composerData`
+became `composer.composerHeaders`, and messages moved out of a `conversationMap` field into
+individual `bubbleId:` entries. An adapter written against today's shape is not a maintenance cost;
+it is a thing that will silently stop working on a Cursor update the user did not know was
+significant, and they will blame Strata rather than Cursor. **Not building it is the decision** —
+see D22 for why "best effort with a version check" was rejected too.
+
+**M5's real scope, therefore:** Claude as a file import, GitHub as the only true connector, Cursor
+not at all. The Import screen must stop implying otherwise — four identical `Connect` rows is a
+promise about three incompatible mechanisms.
 
 ---
 
