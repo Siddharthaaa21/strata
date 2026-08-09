@@ -16,7 +16,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import pg from 'pg';
 import { AuthError, createAuthenticator } from '@strata/auth';
-import type { Scope, WorkspaceId } from '@strata/core';
+import type { PrincipalId, Scope, SourceId, WorkspaceId } from '@strata/core';
 import {
   createAuthStore,
   createDocStore,
@@ -295,6 +295,106 @@ export async function loadLibrary(query?: string): Promise<{
       status: s.status,
     })),
   };
+}
+
+export interface AgentAccessRow {
+  readonly principalId: string;
+  readonly kind: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly createdBy?: string;
+  readonly revokedAt?: string;
+  /** `undefined` means EVERY source. Never collapse it to `[]` — see `reach` below. */
+  readonly sourceIds?: readonly string[];
+  readonly lastUsedAt?: string;
+  readonly activeTokens: number;
+  readonly last4: string[];
+}
+
+/**
+ * Loads the Agent Access screen: every non-human credential in the workspace and what it reaches.
+ *
+ * Source ids are resolved to NAMES here rather than in the view. `src-markdown` is an identifier;
+ * "Local Markdown" is the thing the operator recognises, and this screen's only job is to let
+ * someone decide whether a credential should keep existing.
+ */
+export async function loadAgentAccess(): Promise<{
+  agents: (AgentAccessRow & { readonly reach: string })[];
+  sources: SourceListItem[];
+}> {
+  const { scope, sources: sourceStore } = await requireVault();
+  loadRootEnv();
+  const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId;
+
+  const store = createAuthStore(fromPoolLike(pool()));
+  const [agents, srcs] = await Promise.all([store.listAgents(workspaceId), sourceStore.list(scope)]);
+  const nameOf = new Map(srcs.map((s) => [s.id, s.name]));
+
+  return {
+    sources: srcs.map((s) => ({
+      id: s.id,
+      kind: s.kind,
+      name: s.name,
+      description: s.description,
+      status: s.status,
+    })),
+    agents: agents.map((a) => {
+      const live = a.tokens.filter((t) => t.revokedAt === undefined);
+      // The most recent use across the agent's tokens. An agent is what gets revoked, so "when was
+      // this last used" is a question about the agent, not about one of its credentials.
+      const lastUsed = a.tokens
+        .map((t) => t.lastUsedAt)
+        .filter((v): v is string => v !== undefined)
+        .sort()
+        .at(-1);
+
+      return {
+        principalId: a.principalId,
+        kind: a.kind,
+        name: a.name,
+        createdAt: a.createdAt,
+        ...(a.createdBy === undefined ? {} : { createdBy: a.createdBy }),
+        ...(a.revokedAt === undefined ? {} : { revokedAt: a.revokedAt }),
+        ...(a.sourceIds === undefined ? {} : { sourceIds: a.sourceIds }),
+        ...(lastUsed === undefined ? {} : { lastUsedAt: lastUsed }),
+        activeTokens: live.length,
+        last4: live.map((t) => t.last4),
+        // The sentence the whole screen exists to show. Three cases, and conflating any two of them
+        // is the failure mode: `undefined` is unnarrowed (everything), `[]` is deny-all (nothing),
+        // and a populated list is the narrowing. A `?? []` anywhere upstream would render the most
+        // powerful credential in the workspace as the most harmless.
+        reach:
+          a.sourceIds === undefined
+            ? 'Every source in this workspace'
+            : a.sourceIds.length === 0
+              ? 'Nothing — this grant denies every source'
+              // Falls back to the raw id when a grant names a source that no longer exists — which
+              // is worth SEEING, not hiding: it means an agent is narrowed to something deleted,
+              // and rendering nothing there would read as "reaches nothing" instead.
+              : a.sourceIds.map((id) => nameOf.get(id as SourceId) ?? id).join(', '),
+      };
+    }),
+  };
+}
+
+/**
+ * Revokes one agent. Called only from a POST.
+ *
+ * The scope is re-derived from the caller's session inside this function rather than passed in.
+ * Anything a form submits is attacker-controlled, including a `principalId` — and `revokeAgent` is
+ * scoped by the workspace resolved here, so a form naming another workspace's agent changes
+ * nothing. Membership is the authorization: this workspace is flat, so any member may revoke any
+ * agent in it, which is honest for a shared team vault and would need a role model the day it is
+ * not.
+ */
+export async function revokeAgentAction(principalId: string): Promise<{ tokensRevoked: number }> {
+  await requireVault();
+  loadRootEnv();
+  const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId;
+
+  const store = createAuthStore(fromPoolLike(pool()));
+  const report = await store.revokeAgent(workspaceId, principalId as PrincipalId, new Date().toISOString());
+  return { tokensRevoked: report.tokensRevoked };
 }
 
 export interface RecentImport {
