@@ -39,7 +39,7 @@ const PLACEHOLDER_CONNECTORS = [
 ] as const;
 
 export async function ImportScreen() {
-  const { sources, recent } = await loadImport();
+  const { sources, recent, failures } = await loadImport();
   const bySourceId = new Map(sources.map((s) => [s.id, s]));
 
   const connectors = PLACEHOLDER_CONNECTORS.map((c) => {
@@ -59,6 +59,13 @@ export async function ImportScreen() {
     };
   });
 
+  // Sources that occupy no slot — every indexed GitHub repository is one, because each gets its own
+  // id (`src-github-<owner>-<repo>`) so two repos cannot overwrite each other's `README.md`. The
+  // screen-import node flagged "a real Source whose id is not one of the four is invisible here" as a
+  // genuine gap waiting for its first real cause. This is it, so the gap closes with it.
+  const slotIds = new Set(PLACEHOLDER_CONNECTORS.map((c) => c.id));
+  const extra = sources.filter((s) => !slotIds.has(s.id as (typeof PLACEHOLDER_CONNECTORS)[number]['id']));
+
   return (
     <div className={styles.screen}>
       <div>
@@ -73,7 +80,45 @@ export async function ImportScreen() {
         {connectors.map((c) => (
           <ConnectorRow key={c.id} source={c} />
         ))}
+        {extra.map((s) => (
+          // interactive={false}: these are RECORDS of sources that exist, not slots that start an
+          // import. See ConnectorRow for the control that was doing the wrong thing.
+          <ConnectorRow key={s.id} source={s} interactive={false} />
+        ))}
       </div>
+
+      {/*
+        FAILURES, which this screen has never shown.
+        
+        Carried out of M3: failed events were kept out of Recent Imports because that list has no
+        status indicator by design (README:24), so a failed row would read as a success. Correct
+        reason to keep them out of THAT list; mistaken for a reason to show them nowhere. ADR 0003
+        records failures so a user can learn why a document did not appear — and until now, nothing
+        served that purpose. It matters more since the upload buttons shipped (D24): a person can
+        cause a failure from the browser, and the browser was the one place that could not say so.
+        
+        Its own section, above Recent imports, because a failure is the thing you came to find out
+        about. Absent entirely when there is nothing to report — an empty "Failures" heading on a
+        healthy vault is noise that trains people to ignore the heading.
+      */}
+      {failures.length > 0 && (
+        <div>
+          <h2 className={styles.sectionLabel}>
+            Failed to import ({failures.length})
+          </h2>
+          <div className={styles.recentList}>
+            {failures.map((f) => (
+              <div key={f.id} className={styles.failureRow}>
+                <span className={styles.failurePath}>{f.externalId}</span>
+                {/* The sanitized per-code message by contract (ADR 0003) — never a caught
+                    exception's text, never document content. */}
+                <span className={styles.failureReason}>{f.message || f.code}</span>
+                <span className={styles.recentTime}>{relativeTime(f.occurredAt)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className={styles.sectionLabel}>Recent imports</h2>

@@ -65,3 +65,37 @@
 .clearSearch:hover {
   text-decoration: underline;
 }
+
+/* Paging. The handoff has no pagination design, so this borrows the filter row's spacing and the
+   pill's type rather than inventing a visual language for it. */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-filter-row-gap);
+  margin-top: var(--space-header-gap);
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+}
+
+.pagerLink {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.pagerLink:hover {
+  text-decoration: underline;
+}
+
+/* Kept in the layout rather than removed, so the position line does not shift sideways as you page
+   from the first to the middle to the last. */
+.pagerDisabled {
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+.pagerPosition {
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}

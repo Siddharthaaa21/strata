@@ -1,5 +1,16 @@
 import { sourceTint, statusColor, accent, type SourceKind } from '@strata/tokens';
+import { ConnectorAction, type ConnectorActionKind } from './ConnectorAction.tsx';
+import { GitHubConnect } from './GitHubConnect.tsx';
 import styles from './ConnectorRow.module.css';
+
+/**
+ * The kinds that have a working importer behind them, and therefore a real control.
+ *
+ * A row is live when there is something to run and visibly inert when there is not. Cursor is not
+ * offered at all (D22). GitHub is live as of D29 — it takes an address rather than a file, so it has
+ * its own control rather than sharing the file-picker one.
+ */
+const LIVE: readonly string[] = ['markdown', 'claude'] satisfies ConnectorActionKind[];
 
 /**
  * Per-`SourceKind` initials for the icon tile. Vault.dc.html:270-273 hardcodes these as authored
@@ -23,8 +34,14 @@ const INITIALS: Record<SourceKind, string> = {
  * `status`: `kind === 'markdown'` always shows `Upload` regardless of connection state
  * (Vault.dc.html:273 — `actionLabel: 'Upload'` on the markdown mock entry, independent of any
  * status field), matching the handoff's per-connector authored data rather than collapsing
- * Connect/Upload into one label. `Connect`/`Upload`/`Connected` are visual endpoints only
- * (README:75-76) — no `onClick`.
+ * Connect/Upload into one label.
+ *
+ * The handoff marks these as visual endpoints (README:75-76) and they stayed inert through M3-M7,
+ * long after both importers worked from a terminal. That is placeholder status being mistaken for a
+ * requirement (CLAUDE.md non-negotiable 5): a control naming a capability the system genuinely has,
+ * and refusing to provide it, is the same defect as the Agent Access nav item that 404'd. All three
+ * are now live — Markdown and Claude take a file (D24), GitHub takes an address (D29). Cursor is not
+ * offered at all, because no export exists to offer (D22).
  */
 /** The flat projection, not a domain `Source` — no `workspaceId` or `credentialRef` reaches a component. */
 export interface ConnectorInfo {
@@ -34,7 +51,28 @@ export interface ConnectorInfo {
   readonly status: string;
 }
 
-export function ConnectorRow({ source }: { source: ConnectorInfo }) {
+export function ConnectorRow({
+  source,
+  interactive = true,
+}: {
+  source: ConnectorInfo;
+  /**
+   * Whether this row is a SLOT that can start an import, or a RECORD of a source that already
+   * exists.
+   *
+   * The distinction is not cosmetic. A row's control was chosen from `kind` alone, so the
+   * `src-claude-code` source — recovered transcripts, `kind: 'claude'` — rendered Claude's `Import`
+   * button, which opens a Claude-EXPORT file picker and writes to `src-claude`. Clicking it would
+   * have imported a conversations.json into a different source than the row you clicked. An indexed
+   * GitHub repository had the same defect in a milder form: its `Connect` starts a NEW repo rather
+   * than re-syncing that one.
+   *
+   * Records show what they are and offer nothing. Re-syncing an existing source is a CLI operation
+   * (`npm run ingest:github`, `npm run ingest:claude-code`) and pretending otherwise on this screen
+   * is how a control ends up doing something other than what its row says.
+   */
+  interactive?: boolean;
+}) {
   const kind = source.kind as SourceKind;
   const tint = sourceTint[kind];
   const connected = source.status === 'connected';
@@ -45,14 +83,20 @@ export function ConnectorRow({ source }: { source: ConnectorInfo }) {
   // act producing a link that expires in 24 hours. Labelling all three `Connect` promises a
   // capability for two sources that will never have it, and the person who clicks expecting an
   // OAuth screen is owed better than a control that does nothing.
-  const label = connected && kind !== 'markdown' && kind !== 'claude'
-    ? 'Connected'
-    : kind === 'markdown'
-      ? 'Upload'
-      : kind === 'claude'
-        ? 'Import'
-        : 'Connect';
-  const color = connected && kind !== 'markdown' ? statusColor.connected : accent.default;
+  const live = LIVE.includes(kind);
+  const label = !interactive ? (connected ? 'Connected' : 'Idle') : connected && !live ? 'Connected' : 'Connect';
+  // A live control is always the accent colour, never `statusColor.connected`. Green is this
+  // screen's vocabulary for STATE; these read `Import` and `Upload`, which are things you do. A
+  // green verb tells an operator the action already happened.
+  const color = !interactive
+    ? connected
+      ? statusColor.connected
+      : accent.default
+    : live
+      ? accent.default
+      : connected
+        ? statusColor.connected
+        : accent.default;
 
   return (
     <div className={styles.row}>
@@ -63,9 +107,17 @@ export function ConnectorRow({ source }: { source: ConnectorInfo }) {
         <div className={styles.name}>{source.name}</div>
         <div className={styles.desc}>{source.description}</div>
       </div>
-      <span className={styles.action} style={{ color }} role="button" aria-disabled="true">
-        {label}
-      </span>
+      {interactive && kind === 'github' ? (
+        <GitHubConnect color={accent.default} />
+      ) : interactive && live ? (
+        <ConnectorAction kind={kind as ConnectorActionKind} color={color} />
+      ) : (
+        // Still not a `<button>`. An inert control that reports itself as one to a screen reader is
+        // worse than a label, because it invites the click it cannot honour.
+        <span className={styles.action} style={{ color }} aria-disabled="true">
+          {label}
+        </span>
+      )}
     </div>
   );
 }

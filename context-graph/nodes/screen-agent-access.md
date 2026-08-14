@@ -68,8 +68,27 @@ Two rules carried over from the log itself:
   whichever workspace happens to be looking would invent one. A count says "something is knocking"
   without claiming to know on whose door.
 
-**Still deferred:** per-agent re-scoping (narrowing an existing grant from the UI). It has a sharp
-edge worth designing rather than improvising — the one-active-grant index forces revoke-then-insert,
-and `agent_tokens` carries a composite foreign key requiring a token's grant to belong to its own
-principal, so the token's `grant_id` has to move in the same statement or the write is rejected.
+## Re-scoping, landed 2026-08-10 (D27)
+
+`ScopeEditor.tsx` changes what one agent reaches without destroying it. Previously the only lever was
+Revoke, so narrowing an over-scoped agent meant minting a replacement and redeploying whatever held
+the token — enough friction that the realistic outcome was leaving it over-scoped.
+
+The sharp edge was real and is resolved in **one statement**: `grants_one_active` forces
+revoke-then-insert, and `agent_tokens_grant_belongs_to_principal` means the token's `grant_id` has to
+move in the same breath, or a live token is left pointing at a revoked grant — which authenticates and
+then fails `mintScope` with `revoked`, killing the agent while the UI reports success.
+
+Two `EXISTS` guards chain the CTEs, and they do **different** jobs — established by mutation testing
+after the first version of the comment claimed both were about ordering. `replaced -> inserted` is
+ordering (drop it, seven tests fail). `inserted -> moved` is not: foreign keys fire as AFTER triggers
+at statement end. It refuses to repoint live tokens at a grant that was never inserted *because the
+re-scope was refused*.
+
+**Three explicit modes, not a checkbox list.** `undefined` reaches every source and `[]` reaches none;
+they are opposites, and a control where unticking the last box silently meant "everything" would be
+the most dangerous thing in the app. Refusals — a revoked agent, a `kind: 'user'` principal — return
+zero rather than throwing, and the UI reports the count the database returned, never an optimistic
+"saved" (D16's rule, the same one [[comp-sidebar]]'s revoke button follows).
+
 Member management stays a CLI (ADR 0006 §6b).

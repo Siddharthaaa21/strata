@@ -20,17 +20,22 @@ export const dynamic = 'force-dynamic';
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string | string[] }>;
+  searchParams: Promise<{ q?: string | string[]; page?: string | string[]; folder?: string | string[] }>;
 }) {
-  const { q } = await searchParams;
+  const { q, page, folder } = await searchParams;
   // A repeated `?q=a&q=b` arrives as an array. Taking the first is arbitrary but total; passing an
   // array through would reach `websearch_to_tsquery` as "a,b" and quietly search for something the
   // user never typed.
   const query = Array.isArray(q) ? q[0] : q;
+  const folderParam = Array.isArray(folder) ? folder[0] : folder;
+  // `Number('')` is 0 and `Number('abc')` is NaN — both are clamped to a real page by `loadLibrary`
+  // against the true count, so `?page=0`, `?page=abc` and `?page=999` all render a real page rather
+  // than an empty grid indistinguishable from an empty workspace.
+  const pageParam = Number(Array.isArray(page) ? page[0] : (page ?? '1'));
 
   return (
     <AppShell>
-      <LibraryScreen query={query} />
+      <LibraryScreen query={query} page={pageParam} folder={folderParam} />
     </AppShell>
   );
 }
