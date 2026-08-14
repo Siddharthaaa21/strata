@@ -15,7 +15,7 @@
 import { mintScope } from '@strata/core/scope-internal';
 import type { Scope, WorkspaceId } from '@strata/core';
 import { parseAgentToken, secretMatches } from './tokens.ts';
-import type { AuthStore, SessionClaims } from './store.ts';
+import type { AuthStore, SessionClaims, SessionOptions } from './store.ts';
 
 export * from './tokens.ts';
 export * from './store.ts';
@@ -52,7 +52,7 @@ export interface Authenticator {
    * segment, a configured id — and never something a token should get to choose. Letting the
    * store pick meant it picked arbitrarily.
    */
-  scopeFromSession(workspaceId: WorkspaceId, claims: SessionClaims): Promise<Scope>;
+  scopeFromSession(workspaceId: WorkspaceId, claims: SessionClaims, options?: SessionOptions): Promise<Scope>;
 }
 
 /**
@@ -116,7 +116,7 @@ export function createAuthenticator(store: AuthStore, now: () => Date = () => ne
      * so signature checking lives with the provider integration and this function stays
      * provider-agnostic and testable without one.
      */
-    async scopeFromSession(workspaceId, claims) {
+    async scopeFromSession(workspaceId, claims, options) {
       if (typeof workspaceId !== 'string' || workspaceId === '') throw new AuthError('malformed');
       if (
         typeof claims?.email !== 'string' ||
@@ -130,11 +130,11 @@ export function createAuthenticator(store: AuthStore, now: () => Date = () => ne
 
       // An authenticated stranger is still a stranger. A provider will happily sign in anyone with
       // a Google account; not being on the allowlist is the common case, not an error condition.
-      const row = await store.resolveSession(workspaceId, {
-        provider: claims.provider,
-        subject: claims.subject,
-        email: claims.email.trim().toLowerCase(),
-      });
+      const row = await store.resolveSession(
+        workspaceId,
+        { provider: claims.provider, subject: claims.subject, email: claims.email.trim().toLowerCase() },
+        options,
+      );
       if (row === undefined) throw new AuthError('no-membership');
       if (row.principalRevokedAt !== undefined) throw new AuthError('revoked');
 

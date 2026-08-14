@@ -646,3 +646,243 @@ test('malformed claims are rejected without a database round trip', async () => 
     assert.equal(kind, 'malformed');
   }
 });
+
+test('a non-binding session never spends the member\'s one identity binding', async () => {
+  // The trap this option exists to close. `/auth/dev-login` mints a REAL session, so it wrote a
+  // real identity row — and D16 gives a member exactly one binding. Using the dev shortcut once
+  // therefore locked the genuine provider out with `no-membership`, permanently. It cost a magic
+  // link and an hour to find, on the one task that was blocked.
+  const { db, store } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'dev@example.com' });
+
+  const local = {
+    provider: 'strata-local-dev',
+    subject: 'local|abc',
+    email: 'dev@example.com',
+  };
+  const real = {
+    provider: 'https://project.supabase.co/auth/v1',
+    subject: 'supabase-uuid-1',
+    email: 'dev@example.com',
+  };
+
+  const devSession = await store.resolveSession(WS, local, { bindIdentity: false });
+  assert.ok(devSession, 'the development session still resolves and still gets a scope');
+
+  const { rows } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM user_identities');
+  assert.equal(rows[0]?.n, 0, 'and it claimed nothing');
+
+  // The whole point: the real credential still gets in afterwards.
+  const realSession = await store.resolveSession(WS, real);
+  assert.ok(realSession, 'the genuine provider is not locked out');
+  assert.equal(realSession.principalId, devSession.principalId, 'and it is the same person');
+});
+
+test('a binding session still refuses a second credential — D16 is intact', async () => {
+  // The guard must keep working. If this passes with `bindIdentity: false` anywhere near it, the
+  // fix has quietly disabled the protection instead of narrowing it.
+  const { store } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'alice@example.com' });
+
+  const first = await store.resolveSession(WS, {
+    provider: 'https://project.supabase.co/auth/v1',
+    subject: 'alice-google',
+    email: 'alice@example.com',
+  });
+  assert.ok(first);
+
+  const second = await store.resolveSession(WS, {
+    provider: 'https://project.supabase.co/auth/v1',
+    subject: 'someone-else-claiming-alice',
+    email: 'alice@example.com',
+  });
+  assert.equal(second, undefined, 'a second credential at a claimed invitation is still refused');
+});
+
+test('a non-binding FIRST sign-in still creates the principal and grant', async () => {
+  // The first-sign-in path used the identity insert as its concurrency arbiter. Removing that write
+  // must not remove the principal, the grant, or the membership update with it — a principal
+  // without a grant is an account that exists and cannot be used.
+  const { db, store } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'brandnew@example.com' });
+
+  const session = await store.resolveSession(
+    WS,
+    { provider: 'strata-local-dev', subject: 'local|new', email: 'brandnew@example.com' },
+    { bindIdentity: false },
+  );
+
+  assert.ok(session, 'first sign-in worked without writing an identity');
+  assert.ok(session.grant, 'and it has a grant');
+  const { rows } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM user_identities');
+  assert.equal(rows[0]?.n, 0);
+
+  const members = await store.listMembers(WS);
+  assert.ok(members.find((m) => m.email === 'brandnew@example.com')?.joinedAt, 'membership was updated');
+});
+
+// --- re-scoping an agent from the UI (#31) ---------------------------------------------------
+//
+// The whole reason this is one statement: `grants_one_active` forces revoke-then-insert, and
+// `agent_tokens_grant_belongs_to_principal` means the token has to move in the same breath. Each
+// test below fails for a DIFFERENT structural reason if the CTE chain is broken, which is what
+// makes them worth having over one happy-path assertion.
+
+test('re-scoping narrows what the SAME token can reach, with no new token issued', async () => {
+  const { store, auth } = await fresh();
+  const { principalId, presented } = await store.createAgent(agent());
+
+  // Starts unrestricted: source_ids NULL means every source in the workspace.
+  const before = await auth.scopeFromAgentToken(presented);
+  assert.equal(before.grant.sourceIds, undefined);
+
+  const report = await store.rescopeAgent(WS, principalId, [SRC], new Date().toISOString());
+  assert.deepEqual(report, { grantsReplaced: 1, tokensRepointed: 1 });
+
+  // The SAME presented string now yields a narrowed scope. Re-scoping that required re-issuing a
+  // credential would be a rotation, not a re-scope, and every operator would have to redeploy an
+  // agent to change what it reads.
+  const after = await auth.scopeFromAgentToken(presented);
+  assert.deepEqual(after.grant.sourceIds, [SRC]);
+});
+
+test('re-scoping leaves exactly one active grant — the partial index is not violated', async () => {
+  const { db, store } = await fresh();
+  const { principalId } = await store.createAgent(agent());
+
+  await store.rescopeAgent(WS, principalId, [SRC], new Date().toISOString());
+  await store.rescopeAgent(WS, principalId, [], new Date().toISOString());
+
+  const live = await db.query<{ n: string | number }>(
+    `SELECT count(*) AS n FROM grants WHERE workspace_id = $1 AND principal_id = $2 AND revoked_at IS NULL`,
+    [WS, principalId],
+  );
+  assert.equal(Number(live.rows[0]!.n), 1);
+
+  // History is KEPT, not overwritten in place. "What could this agent reach last Tuesday" is a
+  // question an incident review asks, and an UPDATE of source_ids would have destroyed the answer.
+  const all = await db.query<{ n: string | number }>(
+    `SELECT count(*) AS n FROM grants WHERE workspace_id = $1 AND principal_id = $2`,
+    [WS, principalId],
+  );
+  assert.equal(Number(all.rows[0]!.n), 3);
+});
+
+test('no live token is ever left pointing at a revoked grant', async () => {
+  // The failure this whole design exists to prevent: the token authenticates, then mintScope throws
+  // `revoked`, and the agent is dead while the UI has just reported a successful re-scope.
+  const { db, store, auth } = await fresh();
+  const { principalId, presented } = await store.createAgent(agent());
+
+  await store.rescopeAgent(WS, principalId, [SRC], new Date().toISOString());
+
+  const orphaned = await db.query<{ n: string | number }>(
+    `SELECT count(*) AS n
+       FROM agent_tokens t JOIN grants g
+         ON g.workspace_id = t.workspace_id AND g.id = t.grant_id
+      WHERE t.workspace_id = $1 AND t.revoked_at IS NULL AND g.revoked_at IS NOT NULL`,
+    [WS],
+  );
+  assert.equal(Number(orphaned.rows[0]!.n), 0);
+  await assert.doesNotReject(() => auth.scopeFromAgentToken(presented));
+});
+
+test('deny-all and every-source stay opposites through a re-scope', async () => {
+  const { store, auth } = await fresh();
+  const { principalId, presented } = await store.createAgent(agent({ sourceIds: [SRC] }));
+
+  // [] is deny-all, and must NOT come back as undefined.
+  await store.rescopeAgent(WS, principalId, [], new Date().toISOString());
+  assert.deepEqual((await auth.scopeFromAgentToken(presented)).grant.sourceIds, []);
+
+  // undefined is every-source, and must NOT come back as [].
+  await store.rescopeAgent(WS, principalId, undefined, new Date().toISOString());
+  assert.equal((await auth.scopeFromAgentToken(presented)).grant.sourceIds, undefined);
+});
+
+test('re-scoping a REVOKED agent does nothing — no live grant appears on a dead principal', async () => {
+  const { db, store } = await fresh();
+  const { principalId } = await store.createAgent(agent());
+  await store.revokeAgent(WS, principalId, new Date().toISOString());
+
+  const report = await store.rescopeAgent(WS, principalId, [SRC], new Date().toISOString());
+  assert.deepEqual(report, { grantsReplaced: 0, tokensRepointed: 0 });
+
+  // NOTE what `revokeAgent` does and does not touch: it revokes the PRINCIPAL and its TOKENS, and
+  // deliberately leaves the grant row alone — killing the principal is sufficient, and `mintScope`
+  // checks it. So the original grant is still `revoked_at IS NULL` here, and asserting zero live
+  // grants would be asserting a property this codebase never had.
+  //
+  // The property that matters is that re-scoping minted NOTHING: no second grant, live or dead, on
+  // a principal the operator believes they already shut off.
+  const all = await db.query<{ n: string | number }>(
+    `SELECT count(*) AS n FROM grants WHERE workspace_id = $1 AND principal_id = $2`,
+    [WS, principalId],
+  );
+  assert.equal(Number(all.rows[0]!.n), 1);
+});
+
+test('re-scoping refuses a person, and refuses another workspace agent', async () => {
+  const { store } = await fresh();
+  await store.addMember({ workspaceId: WS, email: 'alice@example.com' });
+  const person = await store.resolveSession(WS, claims('alice@example.com'));
+  assert.ok(person);
+
+  // kind 'user': membership decides what a person reaches, not the agent screen.
+  assert.deepEqual(await store.rescopeAgent(WS, person.principalId, [SRC], new Date().toISOString()), {
+    grantsReplaced: 0,
+    tokensRepointed: 0,
+  });
+
+  // Cross-workspace: the id is real, the workspace is not the caller's.
+  const { principalId } = await store.createAgent(agent());
+  assert.deepEqual(await store.rescopeAgent(WS2, principalId, [SRC], new Date().toISOString()), {
+    grantsReplaced: 0,
+    tokensRepointed: 0,
+  });
+});
+
+test('an already-revoked token is not dragged back onto the new grant', async () => {
+  const { db, store } = await fresh();
+  const { principalId } = await store.createAgent(agent());
+  await db.query(`UPDATE agent_tokens SET revoked_at = $1 WHERE workspace_id = $2`, [
+    new Date().toISOString(),
+    WS,
+  ]);
+
+  const report = await store.rescopeAgent(WS, principalId, [SRC], new Date().toISOString());
+  // The grant is still replaced -- the agent may hold a token issued later -- but a revoked token
+  // stays on the old grant, which is the honest record of what it could reach while it was live.
+  assert.equal(report.grantsReplaced, 1);
+  assert.equal(report.tokensRepointed, 0);
+});
+
+test('a refused re-scope does not strand live tokens on a grant that was never created', async () => {
+  // The case the `EXISTS (SELECT 1 FROM inserted)` guard on the token UPDATE actually covers, and
+  // the one every other refusal test misses: a principal that is revoked while its tokens are still
+  // live. `revokeAgent` sweeps the tokens too, so it cannot produce this state — an operator
+  // revoking the principal directly, or a partially-applied earlier revocation, can.
+  //
+  // Without the guard the UPDATE repoints those live tokens at a grant id that was never inserted,
+  // and the foreign key rejects the whole statement. The re-scope then fails loudly for an agent it
+  // was only ever going to refuse quietly.
+  const { db, store } = await fresh();
+  const { principalId } = await store.createAgent(agent());
+  await db.query(`UPDATE principals SET revoked_at = $1 WHERE workspace_id = $2 AND id = $3`, [
+    new Date().toISOString(),
+    WS,
+    principalId,
+  ]);
+
+  const report = await store.rescopeAgent(WS, principalId, [SRC], new Date().toISOString());
+  assert.deepEqual(report, { grantsReplaced: 0, tokensRepointed: 0 });
+
+  // And the token still points at a grant that exists.
+  const dangling = await db.query<{ n: string | number }>(
+    `SELECT count(*) AS n FROM agent_tokens t
+      WHERE t.workspace_id = $1
+        AND NOT EXISTS (SELECT 1 FROM grants g WHERE g.workspace_id = t.workspace_id AND g.id = t.grant_id)`,
+    [WS],
+  );
+  assert.equal(Number(dangling.rows[0]!.n), 0);
+});

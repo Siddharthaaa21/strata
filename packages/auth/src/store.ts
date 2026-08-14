@@ -32,6 +32,37 @@ export interface AuthLookup {
   readonly expiresAt?: string;
 }
 
+/**
+ * How a session should be treated beyond what its claims say.
+ *
+ * One option, and it exists because of a trap this codebase built for itself. See `bindIdentity`.
+ */
+export interface SessionOptions {
+  /**
+   * Whether this credential may CLAIM the member's identity binding. Defaults to true.
+   *
+   * D16 made an invitation bind to exactly one credential: once `alice@company.com` has signed in,
+   * a second provider account presenting that address is refused rather than silently inheriting
+   * her membership. That rule is right and it stays.
+   *
+   * What it cannot see is that the local development issuer (`/auth/dev-login`) mints a REAL
+   * session and therefore wrote a real binding — so using the dev shortcut once permanently spent
+   * the member's one binding, and the genuine provider was then refused with `no-membership`
+   * forever. A development convenience that locks you out of production authentication is a trap,
+   * not a convenience, and it cost a magic link and an hour to find.
+   *
+   * The store cannot make this judgement: it is provider-agnostic by construction (ADR 0006 §5) and
+   * must not learn the name of our dev issuer. The CALLER knows — it is the one that chose the local
+   * branch — so the caller says so. A session passed `bindIdentity: false` still resolves through
+   * membership and still gets a scope; it simply never becomes the credential the invitation is
+   * spent on.
+   *
+   * No deployed configuration can reach this: `localIssuerAllowed()` requires an explicit flag AND
+   * three independent proofs the process is not deployed.
+   */
+  readonly bindIdentity?: boolean;
+}
+
 export interface NewMember {
   readonly workspaceId: WorkspaceId;
   readonly email: string;
@@ -101,7 +132,11 @@ export interface AuthStore {
    * something a caller could work around, because there was nowhere to say which workspace was
    * meant.
    */
-  resolveSession(workspaceId: WorkspaceId, claims: SessionClaims): Promise<AuthLookup | undefined>;
+  resolveSession(
+    workspaceId: WorkspaceId,
+    claims: SessionClaims,
+    options?: SessionOptions,
+  ): Promise<AuthLookup | undefined>;
 
   /**
    * Creates a principal, its single active grant, and its first token, atomically.
@@ -168,6 +203,67 @@ export interface AuthStore {
    * second time rather than restamping and claiming it did something.
    */
   revokeAgent(workspaceId: WorkspaceId, principalId: PrincipalId, at: string): Promise<AgentRevocation>;
+
+  /**
+   * Changes what one agent can reach, in ONE statement.
+   *
+   * `sourceIds` follows the same rule as everywhere else: `undefined` means **every source in the
+   * workspace**, `[]` means **deny-all**. They are opposites, and any `?? []` between the caller and
+   * here turns "reaches everything" into "reaches nothing" — or, far worse, the reverse.
+   *
+   * ## Why this cannot be two statements
+   *
+   * Grants are replaced, never edited: `grants_one_active` is a partial unique index over
+   * `(workspace_id, principal_id) WHERE revoked_at IS NULL`, so re-scoping is revoke-then-insert.
+   * That is the shape the schema comment for `agent_tokens_grant_belongs_to_principal` warns about,
+   * because between those two writes every live token points at a **revoked** grant — and a token
+   * whose grant is revoked authenticates and then fails `mintScope` with `AuthError('revoked')`.
+   *
+   * Split across two calls, `pg.Pool` may route them to two connections (the reason this codebase
+   * uses data-modifying CTEs rather than BEGIN/COMMIT at all), so the window is not merely short —
+   * it can be left open indefinitely by a crash between them, silently disabling an agent that the
+   * UI has just reported as successfully re-scoped.
+   *
+   * The CTEs are chained through data dependencies rather than merely listed, and the two guards do
+   * **different** jobs — mutation testing was what established this, after the first version of this
+   * comment claimed both were about ordering:
+   *
+   *   - `replaced` -> `inserted` **is** ordering. Independent data-modifying CTEs run in an
+   *     unpredictable order, and the old grant has to leave the `grants_one_active` partial index
+   *     before the new row enters it. Removing this guard fails seven tests.
+   *   - `inserted` -> `moved` is **not** ordering. Foreign keys are checked by AFTER triggers at
+   *     statement end, by which point the new grant exists whatever order the CTEs ran in. This
+   *     guard stops live tokens being repointed at a grant that was never inserted **because the
+   *     re-scope was refused** — which would turn a quiet refusal into a foreign-key error.
+   *
+   * ## What it refuses
+   *
+   * A revoked principal, and any principal of kind `user`. Both return zero counts rather than
+   * throwing. Re-scoping a revoked agent would mint a fresh ACTIVE grant onto a dead principal —
+   * a live-looking credential attached to something an operator believes they have already shut
+   * off. And a person's grant is not this screen's to edit; membership is where that is decided.
+   *
+   * Widening is permitted, not just narrowing. ADR 0006 §2's "narrows only" governs deriving a
+   * `Scope` from a `Grant` at mint time; it is not a limit on the operator who administers the
+   * grant, who can already create an unrestricted agent from the CLI.
+   *
+   * Returns counts, for the reason `removeMember` and `revokeAgent` do: an operator who reads
+   * "re-scoped" stops checking, and if it did not happen the old scope is still live.
+   */
+  rescopeAgent(
+    workspaceId: WorkspaceId,
+    principalId: PrincipalId,
+    sourceIds: readonly SourceId[] | undefined,
+    at: string,
+  ): Promise<AgentRescope>;
+}
+
+/** What `rescopeAgent` actually did. Zeroes mean it refused — see the method's doc comment. */
+export interface AgentRescope {
+  /** 1 on success, 0 if the agent was revoked, unknown, or a person. */
+  readonly grantsReplaced: number;
+  /** Live tokens moved onto the new grant. Zero is normal for an agent whose tokens are all revoked. */
+  readonly tokensRepointed: number;
 }
 
 /** One row of the Agent Access screen. Deliberately contains nothing that could authenticate. */

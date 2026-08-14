@@ -207,8 +207,11 @@ export function createAuthStore(db: SqlDriver): AuthStore {
      *      binding it to the subject that first claimed it is what makes the invitation
      *      single-use.
      */
-    async resolveSession(workspaceId, claims) {
+    async resolveSession(workspaceId, claims, options = {}) {
       const email = claims.email.trim().toLowerCase();
+      // Defaults to true: binding is the rule, and not binding is the exception a caller must ask
+      // for. A default of false would silently disable D16's guard for every caller that forgot.
+      const bindIdentity = options.bindIdentity !== false;
 
       const membership = await db.query<{
         principal_id: string | null;
@@ -243,7 +246,7 @@ export function createAuthStore(db: SqlDriver): AuthStore {
         if (member.principal_id === null || identity.principal_id !== member.principal_id) {
           return undefined;
         }
-      } else if (member.principal_id !== null) {
+      } else if (member.principal_id !== null && bindIdentity) {
         // The invitation has been claimed, by a credential that is not this one. Bind only if the
         // principal genuinely has no identity yet — true for a member created before identities
         // were recorded, and for one an operator provisioned directly. If an identity already
@@ -263,6 +266,9 @@ export function createAuthStore(db: SqlDriver): AuthStore {
           [claims.provider, claims.subject, workspaceId, member.principal_id, new Date().toISOString()],
         );
       }
+      // NOTE what a non-binding session skips: the refusal AND the insert, together. It neither
+      // claims the binding nor is blocked by one, which is exactly what "a development credential
+      // is not the credential this invitation is spent on" has to mean in both directions.
 
       if (member.principal_id === null) {
         // First sign-in. Principal, grant, identity link, and the membership update all in ONE
@@ -282,7 +288,7 @@ export function createAuthStore(db: SqlDriver): AuthStore {
              SELECT $1,$5,p.id,NULL,$4 FROM p RETURNING id
            ), i AS (
              INSERT INTO user_identities (provider, subject, workspace_id, principal_id, linked_at)
-             SELECT $6,$7,$1,p.id,$4 FROM p
+             SELECT $6,$7,$1,p.id,$4 FROM p WHERE $9::boolean
              ON CONFLICT (provider, subject) DO NOTHING
              RETURNING principal_id
            )
@@ -292,10 +298,15 @@ export function createAuthStore(db: SqlDriver): AuthStore {
            -- grant -- data-modifying CTEs all run regardless of whether the final statement uses
            -- them -- but the orphan is unreferenced by any membership or identity, so it grants
            -- nothing. Cleaning it up is a chore, not a hole.
+           --
+           -- A NON-BINDING session writes no identity row, so it cannot use that arbiter. It falls
+           -- back to the UPDATE's own principal_id IS NULL predicate, which is atomic and settles
+           -- exactly one winner on its own -- the identity insert was always the STRONGER arbiter,
+           -- keeping membership and identity consistent with each other, not the only one.
            UPDATE memberships SET principal_id = $2, joined_at = $4
             WHERE workspace_id = $1 AND email = $8 AND principal_id IS NULL
-              AND EXISTS (SELECT 1 FROM i)`,
-          [workspaceId, principalId, email, now, grantId, claims.provider, claims.subject, email],
+              AND (NOT $9::boolean OR EXISTS (SELECT 1 FROM i))`,
+          [workspaceId, principalId, email, now, grantId, claims.provider, claims.subject, email, bindIdentity],
         );
       }
 
@@ -624,6 +635,83 @@ export function createAuthStore(db: SqlDriver): AuthStore {
       return {
         principalsRevoked: Number(rows[0]?.principals_revoked ?? 0),
         tokensRevoked: Number(rows[0]?.tokens_revoked ?? 0),
+      };
+    },
+
+    /**
+     * Replaces one agent's grant, and moves its live tokens onto the replacement, atomically.
+     *
+     * Read `rescopeAgent` in `packages/auth/src/store.ts` for WHY this is one statement. What
+     * matters here is that the two `EXISTS` guards do **different** jobs. Mutation testing is what
+     * established that; the first version of this comment claimed both were about ordering, and
+     * removing the second one broke nothing at all.
+     *
+     *   `replaced` -> `inserted`   ORDERING. Independent data-modifying CTEs run in an unpredictable
+     *                              order, and the old grant must leave the `grants_one_active`
+     *                              partial index before the new row enters it. Remove this and seven
+     *                              tests fail.
+     *
+     *   `inserted` -> `moved`      NOT ordering. Foreign keys are checked by AFTER triggers at
+     *                              statement end, so the new grant exists by then regardless. This
+     *                              guard stops live tokens being repointed at a grant that was never
+     *                              inserted *because the re-scope was refused* — without it, a
+     *                              refusal that should be silent raises a foreign-key error instead.
+     *                              Only reachable when a principal is revoked while its tokens are
+     *                              not, which `revokeAgent` never produces but an operator can.
+     */
+    async rescopeAgent(workspaceId, principalId, sourceIds, at) {
+      const grantId = randomUUID();
+
+      const { rows } = await db.query<{
+        grants_replaced: string | number;
+        tokens_repointed: string | number;
+      }>(
+        `WITH target AS (
+           -- kind <> 'user' matches listAgents: a person's grant is not this screen's to edit.
+           -- revoked_at IS NULL because re-scoping a revoked agent would mint a fresh ACTIVE grant
+           -- onto a dead principal — a live-looking credential on something already shut off.
+           SELECT id FROM principals
+            WHERE workspace_id = $1 AND id = $2 AND kind <> 'user' AND revoked_at IS NULL
+         ), replaced AS (
+           UPDATE grants SET revoked_at = $3
+            WHERE workspace_id = $1
+              AND principal_id = $2
+              AND revoked_at IS NULL
+              AND EXISTS (SELECT 1 FROM target)
+           RETURNING id
+         ), inserted AS (
+           INSERT INTO grants (workspace_id, id, principal_id, source_ids, created_at)
+           SELECT $1, $4, $2, $5::text[], $3
+            WHERE EXISTS (SELECT 1 FROM replaced)
+           RETURNING id
+         ), moved AS (
+           -- Live tokens only. A revoked token stays pointed at the revoked grant, which the
+           -- foreign key still permits (the row is revoked, not deleted) and which is the honest
+           -- record: that token could reach what the OLD grant allowed, for as long as it was live.
+           UPDATE agent_tokens SET grant_id = $4
+            WHERE workspace_id = $1
+              AND principal_id = $2
+              AND revoked_at IS NULL
+              AND EXISTS (SELECT 1 FROM inserted)
+           RETURNING token_id
+         )
+         SELECT (SELECT count(*) FROM inserted) AS grants_replaced,
+                (SELECT count(*) FROM moved)    AS tokens_repointed`,
+        [
+          workspaceId,
+          principalId,
+          at,
+          grantId,
+          // NULL and '{}' are opposites: every source vs deny-all. A `?? []` here would silently
+          // convert "reaches everything" into "reaches nothing", and the reverse mistake elsewhere
+          // is how a narrowed agent quietly gains the whole vault.
+          sourceIds === undefined ? null : [...sourceIds],
+        ],
+      );
+
+      return {
+        grantsReplaced: Number(rows[0]?.grants_replaced ?? 0),
+        tokensRepointed: Number(rows[0]?.tokens_repointed ?? 0),
       };
     },
 

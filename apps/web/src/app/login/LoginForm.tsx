@@ -21,7 +21,14 @@ import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '../../lib/supabase-browser.ts';
 import styles from './Login.module.css';
 
-export function LoginForm({ linkFailure }: { linkFailure?: string | undefined }) {
+export function LoginForm({
+  linkFailure,
+  next,
+}: {
+  linkFailure?: string | undefined;
+  /** Where to land after the link is followed. Same-origin path, re-validated by the callback. */
+  next?: string | undefined;
+}) {
   const [email, setEmail] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [error, setError] = useState('');
@@ -53,7 +60,12 @@ export function LoginForm({ linkFailure }: { linkFailure?: string | undefined })
     const { error: err } = await supabaseBrowser().auth.signInWithOtp({
       email: email.trim(),
       options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        // `next` rides along so a magic link returns you to the page you asked for, not the
+        // Library. The callback re-validates it as a same-origin path — this value has been through
+        // an email and is not trusted on arrival.
+        emailRedirectTo: `${window.location.origin}/auth/callback${
+          next ? `?next=${encodeURIComponent(next)}` : ''
+        }`,
         // The allowlist IS the invite (ADR 0006 §6b). Letting the provider create a user for an
         // address nobody invited would fill the provider's user table with strangers who can never
         // sign in — noise that looks like a breach the first time somebody reads it.
