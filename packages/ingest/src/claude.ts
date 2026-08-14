@@ -262,8 +262,10 @@ export function scanClaudeExport(
       // vault kept the old title forever while the run reported success. Caught by running the CLI
       // twice, not by a unit test: the adapter was correct in isolation and the LOOP was wrong.
       //
-      // The Markdown adapter has always had this right — its hash covers frontmatter and body,
-      // because both derive the document. This is the same rule, stated for a different source.
+      // The rule is "hash every input the document derives from". The Markdown adapter was cited
+      // here as having always had it right; it did not — its hash covered the file's bytes while
+      // `folder` also derives from the scan root's NAME, which is not in the file. Same bug, same
+      // shape, found the same way, fixed in D30.
       const hash = contentHash([asString(c['name']) ?? '', folder.value, transcript].join('\u0000'));
 
       pending.push({

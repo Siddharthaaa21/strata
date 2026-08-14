@@ -15,6 +15,14 @@ export interface KnownDoc {
   readonly docId: DocId;
   readonly contentHash: string;
   /**
+   * The folder the stored document is currently filed under.
+   *
+   * Carried because the content hash cannot see it: `folder` derives partly from the scan ROOT's
+   * name, which is not in the file, so a re-ingest from a differently-named directory produced an
+   * identical hash and left the old folder in place forever (D30).
+   */
+  readonly folder: string;
+  /**
    * Set when the stored document is tombstoned — its file was pruned earlier and has now returned.
    *
    * The lookup deliberately reports deleted rows rather than hiding them, so a restored file
@@ -271,7 +279,21 @@ export async function runIngest(input: RunIngestInput): Promise<IngestResult> {
             // written — leaving the row deleted, invisible to every read path, while the run
             // reports the file as present. `upsert` is what clears `deleted_at`, so the decision
             // has to reach it.
-            prior.deletedAt !== undefined || input.reprocess || prior.contentHash !== pending.contentHash
+            prior.deletedAt !== undefined ||
+              input.reprocess ||
+              prior.contentHash !== pending.contentHash ||
+              // DERIVED-FIELD DRIFT, which the content hash cannot see (D30).
+              //
+              // `folder` derives partly from the scan ROOT's basename for a top-level file, and the
+              // root name is not in the file — so re-ingesting the same README from a
+              // differently-named directory produced an identical hash, decided `unchanged`, wrote
+              // nothing, and left the vault filing it under the old directory's name forever while
+              // the run reported success. A real document sat under a temporary staging path.
+              //
+              // Checked HERE rather than folded into the hash: the hash has to stay stable when a
+              // file moves, because rename detection matches identical hashes across different
+              // paths (D20). Putting `folder` in it broke exactly that.
+              prior.folder !== pending.folder.value
             ? 'changed'
             : 'unchanged';
 

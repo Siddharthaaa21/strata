@@ -55,5 +55,11 @@ export * from './markdown.ts';
 // The Claude export adapter deliberately does NOT implement `SourceAdapter` above — there is no API
 // to page through, so the interface would describe nothing. See D22 and `adapter-claude`.
 export * from './claude.ts';
+// GitHub is the only one of the four with a real API, so it IS a fetching adapter — but the parsing
+// half is `scanMarkdown`'s, reached through the in-memory port. See `adapter-github`.
+export * from './github.ts';
+// Documents Claude WROTE, recovered from local Claude Code session logs. Not a connector — there is
+// nothing to connect to; the transcripts are already on disk. See `adapter-claude-code`.
+export * from './claude-code.ts';
 export * from './pipeline.ts';
 export * from './persist.ts';

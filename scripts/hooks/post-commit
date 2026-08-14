@@ -1,0 +1,51 @@
+#!/bin/sh
+# Re-ingest this repo's Markdown after a commit, so the vault matches what you just committed.
+#
+# Installed by `npm run hooks:install`. Lives in scripts/hooks/ because `.git/hooks/` is not tracked
+# by git — a hook that only exists on one machine is a hook nobody else has.
+#
+# FOUR RULES, and each one is a way this could otherwise become the thing that ruins your day:
+#
+#   1. post-commit, never pre-commit. Ingest is a side effect of committing, not a condition of it.
+#      A pre-commit hook that needs a database can block a commit on a plane.
+#   2. Never exits non-zero. `git commit` has already succeeded by the time this runs; a failure here
+#      must not print a scary error over a commit that worked fine.
+#   3. Runs detached. Ingest touches the network, and nobody should wait seconds for a commit.
+#   4. Does nothing when no Markdown changed, which is most commits.
+
+set -u
+
+# An escape hatch that does not require editing the file: STRATA_INGEST_HOOK=0 git commit ...
+if [ "${STRATA_INGEST_HOOK:-1}" = "0" ]; then
+  exit 0
+fi
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+
+# Only if this commit touched Markdown. A rebase or a code-only commit costs nothing.
+# `--diff-filter=d` drops deletions: pruning is a deliberate act (D29/D31), never a side effect.
+if ! git diff-tree --no-commit-id --name-only --diff-filter=d -r HEAD 2>/dev/null \
+   | grep -qiE '\.(md|markdown)$'; then
+  exit 0
+fi
+
+# Without a database there is nothing to ingest into. Silent, because a fresh clone with no .env is
+# an ordinary state and not something to nag about on every commit.
+if [ ! -f "$ROOT/.env" ] && [ -z "${DATABASE_URL:-}" ]; then
+  exit 0
+fi
+
+LOG="$ROOT/.git/strata-ingest.log"
+
+# Detached, output to a log. `>/dev/null 2>&1` on the outer call keeps the terminal clean; the log is
+# where you look when the Library did not update and you want to know why.
+{
+  printf '\n=== %s  %s ===\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$(git rev-parse --short HEAD)"
+  # No --prune. A commit is not evidence that a document should be deleted from the vault — you may
+  # have committed on a branch that simply does not contain it. Removal stays an explicit,
+  # deliberate run at a terminal.
+  npm run --silent ingest -- "$ROOT" 2>&1
+} >>"$LOG" &
+
+exit 0

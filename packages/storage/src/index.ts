@@ -343,6 +343,14 @@ export interface DocStore {
     | {
         readonly docId: DocId;
         readonly contentHash: string;
+        /**
+         * The folder the document is currently filed under.
+         *
+         * Returned because the content hash cannot see it: `folder` derives partly from the scan
+         * ROOT's name, which is not in the file. Without this the pipeline had no way to notice
+         * that a re-ingest from a differently-named directory should refile the document (D30).
+         */
+        readonly folder: string;
         /** Set when the document is tombstoned. Present so the caller can force a restore (R5). */
         readonly deletedAt?: string;
       }
@@ -379,7 +387,24 @@ export interface DocStore {
    * Separate from `search` because ts_rank_cd over an empty query is meaningless — ordering here is
    * recency, which is the only sensible default when the user has not asked for anything specific.
    */
-  list(scope: Scope, options?: { readonly folder?: string; readonly limit?: number }): Promise<readonly DocSummary[]>;
+  /**
+   * `offset` is what makes a vault larger than `MAX_RESULTS` reachable at all.
+   *
+   * The ceiling stays exactly where it was — no single call may return more than 50 rows, which is
+   * the anti-exfiltration property an agent is held to. Paging is the caller asking for a DIFFERENT
+   * fifty, not a bigger page, so a human can reach document 51 while an agent still cannot drain the
+   * workspace in one request.
+   *
+   * Ordering is `updated_at DESC, id DESC`, and the tiebreak is load-bearing rather than tidy: this
+   * vault has 47 documents across 30 distinct timestamps, so seventeen of them share one with a
+   * neighbour. Without a unique final key, Postgres may return tied rows in any order between two
+   * queries — which under offset paging shows a document on page one AND page two while another is
+   * never shown at all.
+   */
+  list(
+    scope: Scope,
+    options?: { readonly folder?: string; readonly limit?: number; readonly offset?: number },
+  ): Promise<readonly DocSummary[]>;
   /**
    * How many documents are in scope, ignoring `MAX_RESULTS`.
    *
@@ -526,8 +551,13 @@ export function createDocStore(db: SqlDriver): DocStore {
       // for the same path, the original row still tombstoned underneath it, and the identity
       // constraint then rejecting the write outright. Callers are told via `deletedAt` so the
       // pipeline can force a rewrite rather than deciding `unchanged` and leaving it invisible.
-      const { rows } = await db.query<{ id: string; content_hash: string; deleted_at: Date | string | null }>(
-        `SELECT id, content_hash, deleted_at FROM docs
+      const { rows } = await db.query<{
+        id: string;
+        content_hash: string;
+        folder: string;
+        deleted_at: Date | string | null;
+      }>(
+        `SELECT id, content_hash, folder, deleted_at FROM docs
           WHERE workspace_id = $1 AND source_id = $2 AND external_id = $3`,
         [workspaceId, sourceId, externalId],
       );
@@ -536,6 +566,7 @@ export function createDocStore(db: SqlDriver): DocStore {
       return {
         docId: row.id as DocId,
         contentHash: row.content_hash,
+        folder: row.folder,
         ...(row.deleted_at === null ? {} : { deletedAt: new Date(row.deleted_at).toISOString() }),
       };
     },
@@ -690,7 +721,9 @@ export function createDocStore(db: SqlDriver): DocStore {
             AND d.deleted_at IS NULL
             AND ($3::text[] IS NULL OR d.source_id = ANY($3::text[]))
             AND d.search_vector @@ c.tsq
-          ORDER BY rank DESC, d.updated_at DESC
+          -- Same reasoning as list: rank and timestamp can both tie, and without a unique final
+          -- key two identical searches can disagree about the order of equally-good hits.
+          ORDER BY rank DESC, d.updated_at DESC, d.id DESC
           LIMIT $4`,
         [filter.workspaceId, query, sourceIds === undefined ? null : [...sourceIds], capped],
       );
@@ -710,6 +743,16 @@ export function createDocStore(db: SqlDriver): DocStore {
     async list(scope, options = {}) {
       const filter = scopeFilter(scope);
       const capped = Math.max(1, Math.min(options.limit ?? MAX_RESULTS, MAX_RESULTS));
+      // Every non-integer is forced to 0 before it reaches SQL. All three cases are reachable by
+      // hand-editing `?page=` in the address bar:
+      //
+      //   negative    -> Postgres rejects a negative OFFSET outright
+      //   fractional  -> silently truncated, so the page quietly differs from the one requested
+      //   NaN         -> `?page=abc` parses to NaN, and `Math.max(0, NaN)` is NaN, not 0. That
+      //                  arrives as the literal string "NaN" and 500s the Library. The obvious
+      //                  clamp does NOT cover this, which a test caught and review would not have.
+      const requestedOffset = options.offset ?? 0;
+      const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.floor(requestedOffset)) : 0;
       const sourceIds = filter.sourceIds;
 
       const { rows } = await db.query<{
@@ -727,13 +770,17 @@ export function createDocStore(db: SqlDriver): DocStore {
             AND deleted_at IS NULL
             AND ($2::text[] IS NULL OR source_id = ANY($2::text[]))
             AND ($3::text IS NULL OR folder = $3::text)
-          ORDER BY updated_at DESC
-          LIMIT $4`,
+          -- The id breaks the tie, and it is not decoration. 47 documents here share 30 timestamps,
+          -- so ordering on updated_at alone leaves tied rows in whatever order the planner returns
+          -- stable enough to look correct on one page, and wrong the moment OFFSET is involved.
+          ORDER BY updated_at DESC, id DESC
+          LIMIT $4 OFFSET $5`,
         [
           filter.workspaceId,
           sourceIds === undefined ? null : [...sourceIds],
           options.folder ?? null,
           capped,
+          offset,
         ],
       );
 

@@ -45,6 +45,15 @@ export interface MarkdownOptions {
 }
 
 const DEFAULT_EXTENSIONS = ['.md', '.markdown'] as const;
+
+/**
+ * Extensions close enough to Markdown that somebody would expect them to import.
+ *
+ * These are the only non-matching files reported as `unsupported-type`. Everything else — source
+ * code, lockfiles, images — is skipped without a word, because it was never a candidate. See the
+ * scan loop for why that distinction earns its keep.
+ */
+const DOCUMENT_LIKE = ['.mdx', '.txt', '.rst', '.org', '.adoc', '.textile'] as const;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const NUL = String.fromCharCode(0);
 
@@ -307,15 +316,31 @@ export async function scanMarkdown(
       // Recorded, not silently dropped: a skipped symlink the user expected to see is a support
       // question, and an empty failure list would make it invisible.
       if (entry.isSymlink) throw new MarkdownError('unsupported-type');
-      if (!extensions.some((ext) => externalId.toLowerCase().endsWith(ext))) {
-        throw new MarkdownError('unsupported-type');
+
+      // Not a candidate at all -> SKIPPED SILENTLY, not recorded as a failure.
+      //
+      // A `.ts` file in a scanned directory is not a document that failed to import; it was never a
+      // document. Reporting it as a failure was harmless while the ingest was pointed at a folder of
+      // Markdown, and became absurd the moment it could be pointed at a repository root: 147 failure
+      // events per run, one per source file, written to the audit trail and to the Import screen —
+      // burying the handful of failures that actually mean something.
+      //
+      // A NEAR-MISS still reports. `.mdx` and `.txt` are things somebody reasonably expects to
+      // import, so silence there would look like the file was seen and quietly dropped. The
+      // distinction is "would a person be surprised this did not import?", and it is the same
+      // judgement D31 makes about `node_modules` versus a symlink.
+      const lower = externalId.toLowerCase();
+      if (!extensions.some((ext) => lower.endsWith(ext))) {
+        if (DOCUMENT_LIKE.some((ext) => lower.endsWith(ext))) {
+          throw new MarkdownError('unsupported-type');
+        }
+        continue;
       }
 
       const stat = await fs.stat(root, entry.path);
       if (stat.size > maxBytes) throw new MarkdownError('too-large');
 
       const raw = await fs.readText(root, entry.path);
-      const hash = contentHash(raw);
 
       const { data, body } = parseFrontmatter(raw);
       const origin: RawOrigin = {
@@ -338,6 +363,22 @@ export async function scanMarkdown(
       const excerpt = deriveExcerpt(origin, normalizedBody);
       const folder = deriveFolder(origin, rootName);
       const tags = deriveTags(origin);
+
+      /**
+       * THE HASH IS CONTENT IDENTITY, and deliberately covers the file's bytes only.
+       *
+       * It must stay stable when a file MOVES, because rename detection (D20) works by matching
+       * identical hashes across different paths. Folding the derived `folder` in here — tried, and
+       * it broke three lifecycle tests — makes every move between folders look like a new document
+       * and defeats the mechanism entirely.
+       *
+       * Derived-field drift is a DIFFERENT question and is answered separately: `findKnown` returns
+       * the stored `folder`, and the pipeline treats a mismatch as `changed`. That covers the real
+       * bug — `folder` falls back to the scan ROOT's basename for a top-level file, and the root
+       * name is not in the file, so the same README ingested from a differently-named directory used
+       * to report `unchanged` and keep the old folder forever (D30).
+       */
+      const hash = contentHash(raw);
 
       pending.push({
         sourceId,
