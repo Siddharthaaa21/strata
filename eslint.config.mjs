@@ -20,6 +20,9 @@ export default tseslint.config(
       "**/*.tsbuildinfo",
       "context-graph/graph.json",
       "context-graph/graph.mmd",
+      // Untracked scratch files. Not repository source, and linting them fails the gate for code
+      // nobody intends to ship.
+      ".probe/**",
       "design/handoff/**",
       // Agent worktrees are full checkouts of this repo. Linting them lints duplicate copies of
       // every source file, and the duplicates trip rules scoped by path (the Scope-cast

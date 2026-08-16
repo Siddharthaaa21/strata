@@ -54,3 +54,6 @@ id_rsa*
 *.rej
 coverage/
 .idea/
+
+# Untracked scratch files
+.probe/

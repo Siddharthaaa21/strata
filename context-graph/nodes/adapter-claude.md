@@ -28,13 +28,37 @@ make a re-export after a single deletion rewrite the identity of every conversat
 exports of an unchanged conversation must agree, and the object carries fields that move between
 exports without the conversation changing.
 
+**What a conversation contributes is DOCUMENTS, not the conversation (D34).** The rule below that
+skips `tool_use` blocks as plumbing was also discarding every document Claude authored, because on
+claude.ai an artifact *is* a `tool_use` block (`name: 'artifacts'`, body in `input.content`) and a
+sandbox file is another (`name: 'create_file'`, body in `input.file_text`). The first real export
+run made the cost concrete: 72 conversations imported, 32 authored documents inside them thrown
+away — including the two the owner had gone looking for by name.
+
+So `include` defaults to `documents`: only what Claude wrote. `transcripts` is the original whole-
+thread behaviour, `both` keeps each document and its conversation. `both` is not the default because
+artifact content is quoted verbatim inside the transcript, so it stores every document twice.
+
+Identity for an authored document is `<conversation uuid>/<artifact id or path>`. Qualified by the
+conversation because sandbox paths like `/home/claude/build.js` recur across unrelated threads —
+three times in that first export — and unqualified they would be one document overwriting itself on
+every import. Within a thread, LAST WRITE WINS and earlier versions are counted, not emitted:
+three writes of one path are one document with three revisions, which is the collision-and-flip-flop
+[[risk-injection]]'s review found in [[adapter-markdown]] and is worth not rebuilding here.
+
+Artifact `update` and `str_replace` are counted as revisions but never replayed. Reconstructing
+final state from an edit chain is a second implementation of the tool's own semantics, and getting
+it subtly wrong stores a document that never existed.
+
 **[[risk-injection]] applies here harder than anywhere else in the system.** This is not "documents
 that happen to be model-generated" — it is a verbatim transcript of a model being instructed, stored
 and served back to models over MCP. A conversation in which someone asked Claude to write a prompt
 injection is an *ordinary document* in this source, not an attack. Every derived string goes through
 `normalizeIngested`; bodies are fenced downstream like any other. `tool_use` / `tool_result` blocks
-are skipped rather than rendered — their payloads are exactly the structured text that reads as
-instruction, and they are plumbing rather than conversation.
+are skipped when RENDERING A TRANSCRIPT — their payloads are exactly the structured text that reads
+as instruction, and they are plumbing rather than conversation. They are read separately for
+authored documents, which is a different question from what belongs in a transcript, and the
+document body normalizes and fences on the same path as everything else.
 
 **Titles.** Claude names most threads `Untitled`, so `name` alone files an entire import under one
 indistinguishable label — the worst outcome for a product whose job is finding things again. Falls

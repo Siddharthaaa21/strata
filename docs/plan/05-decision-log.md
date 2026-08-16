@@ -1381,3 +1381,45 @@ touched it.
 someone looked at the screen. This is D17/D22/D23/D25/D30's property for the sixth time — **writing
 is not the same as being read** — and the practical conclusion is not "write more tests" but "open
 the page", which is now how each of these was found.
+
+---
+
+## D34 — The Claude adapter imported conversations and threw away the documents · 2026-08-16
+
+**Decision.** `scanClaudeExport` defaults to `include: 'documents'` — a conversation contributes the
+documents Claude authored in it, not the transcript. `transcripts` keeps the original behaviour and
+`both` keeps each document alongside its thread.
+
+**What was wrong.** The adapter skipped `tool_use` blocks with a comment calling them "the model's
+plumbing, not the conversation". That is right for rendering a transcript and wrong for finding
+documents, because on claude.ai an artifact *is* a `tool_use` block — `name: 'artifacts'`, body in
+`input.content` — and a sandbox file is `name: 'create_file'`, body in `input.file_text`. The rule
+that kept plumbing out of a body was also discarding every document the source exists to collect.
+
+**How it surfaced, and this is the part worth keeping.** The first import of a real export produced
+72 documents and the owner's reaction was that none of it was what they wanted — vitamin dosages and
+credit-card comparisons in a vault scoped as an engineering knowledge base. Reading the export
+directly rather than trusting the import found 32 authored documents inside those 72 conversations,
+including the two they had named from memory. **The importer reported complete success while
+inverting its own purpose.** No test could have failed here: every test asserted that a conversation
+becomes a document, which is exactly what it did.
+
+**Identity.** `<conversation uuid>/<artifact id or path>`. Qualified by the conversation because
+`/home/claude/build.js` appeared in three unrelated threads in one export; unqualified they collapse
+to one document that overwrites itself on every import. Within a thread, last write wins and earlier
+versions are counted rather than emitted — a document written three times is one document with three
+revisions. Emitting each would rebuild the collision-and-flip-flop that R2's review found in the
+Markdown adapter.
+
+**Not implemented, deliberately:** replaying `str_replace` and artifact `update` chains to
+reconstruct final state. That is a second implementation of the tool's own semantics, and a subtle
+error stores a document that never existed. Edits count as revisions; kept content is content a tool
+call actually carried.
+
+**Why `both` is not the default.** Artifact content is quoted verbatim inside the transcript, so
+`both` stores every document twice and doubles what search ranks over.
+
+**The pattern.** D17/D22/D23/D25/D30/D33 were "writing is not the same as being read". This is the
+next one along: **an adapter that runs, reports success, and collects the wrong thing.** The tests
+described the implementation faithfully; nobody had checked the implementation against the purpose.
+Found by reading the source data, which is the only place that comparison can be made.
