@@ -84,7 +84,14 @@ if (projectsPath) {
 console.log(`Reading ${basename(target)}`);
 let scanned;
 try {
-  scanned = scanClaudeExport(raw, sourceId, { projectsByConversation });
+  // Default `documents`: only what Claude authored. `--include transcripts` restores the original
+  // whole-thread import, `--include both` keeps each document AND the conversation around it.
+  const include = arg('--include', 'documents');
+  if (!['documents', 'transcripts', 'both'].includes(include)) {
+    console.error(`Unknown --include ${include}. Use documents, transcripts, or both.`);
+    process.exit(1);
+  }
+  scanned = scanClaudeExport(raw, sourceId, { projectsByConversation, include });
 } catch (e) {
   // The whole-file shape failing is the likeliest operator mistake — the export ZIP holds four JSON
   // files and only one of them is this. Reporting "0 imported" instead would be indistinguishable

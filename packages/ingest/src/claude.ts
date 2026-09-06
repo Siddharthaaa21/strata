@@ -110,6 +110,97 @@ export function messageText(message: unknown): string | undefined {
 }
 
 /**
+ * One document Claude authored inside a conversation.
+ *
+ * `key` is stable across exports and is what makes re-import idempotent: an artifact carries its own
+ * id, and a written file carries its path. Both are assigned at authoring time and survive a
+ * re-export, a rename of the thread, and the conversation being continued.
+ */
+export interface AuthoredDoc {
+  readonly key: string;
+  readonly title: string;
+  readonly content: string;
+  /** How many earlier versions of this same document appeared before the one we kept. */
+  readonly revisions: number;
+  readonly createdAt: string | undefined;
+}
+
+/**
+ * The documents Claude WROTE in a conversation, as opposed to the conversation itself.
+ *
+ * This exists because `messageText` deliberately drops `tool_use` blocks as "the model's plumbing",
+ * and on claude.ai that is where authored documents actually live. An artifact is a `tool_use` block
+ * named `artifacts`; a file written in the analysis sandbox is one named `create_file`. So the rule
+ * that keeps tool plumbing out of a transcript was also discarding every document the user came here
+ * to find — 32 of them in the export that surfaced this, including the two they asked for by name.
+ *
+ * Both shapes are read, and they differ:
+ *   - `artifacts` carries `id`, `title`, `content` — already a document, already named.
+ *   - `create_file` carries `path` and `file_text` — a file, so the name comes from the path.
+ *
+ * LAST WRITE WINS, and earlier ones are counted rather than emitted. A document rewritten three
+ * times in one thread is one document with three revisions, not three documents; emitting each would
+ * collide on identity and flip-flop between them on every re-import — the defect R2's review found in
+ * the Markdown adapter, which is worth not rebuilding here.
+ *
+ * `str_replace` and artifact `update` commands are deliberately NOT reconstructed. Replaying an edit
+ * chain to rebuild final state is a second implementation of the tool's own semantics, and getting
+ * it subtly wrong produces a document that never existed. They count as revisions; the content we
+ * keep is content the tool actually carried.
+ */
+export function authoredDocuments(messages: readonly unknown[]): readonly AuthoredDoc[] {
+  const byKey = new Map<string, AuthoredDoc>();
+
+  const record = (key: string, title: string, content: string, createdAt: string | undefined) => {
+    const prior = byKey.get(key);
+    byKey.set(key, {
+      key,
+      title: title.slice(0, MAX_TITLE),
+      content,
+      revisions: prior === undefined ? 0 : prior.revisions + 1,
+      createdAt: prior?.createdAt ?? createdAt,
+    });
+  };
+
+  for (const message of messages) {
+    if (message === null || typeof message !== 'object') continue;
+    const content = (message as Record<string, unknown>)['content'];
+    if (!Array.isArray(content)) continue;
+    const messageAt = asString((message as Record<string, unknown>)['created_at']);
+
+    for (const block of content) {
+      if (block === null || typeof block !== 'object') continue;
+      const b = block as Record<string, unknown>;
+      if (b['type'] !== 'tool_use') continue;
+      const input = b['input'];
+      if (input === null || typeof input !== 'object') continue;
+      const i = input as Record<string, unknown>;
+
+      if (b['name'] === 'artifacts') {
+        const body = asString(i['content']);
+        const id = asString(i['id']);
+        // An update with no content is an edit to something recorded earlier, not a new document.
+        if (body === undefined || id === undefined) continue;
+        record(id, asString(i['title']) ?? id, body, messageAt);
+        continue;
+      }
+
+      if (b['name'] === 'create_file') {
+        const body = asString(i['file_text']);
+        const path = asString(i['path']);
+        if (body === undefined || path === undefined) continue;
+        // The basename is the document's name; the sandbox directory it was written into
+        // (`/home/claude`, `/mnt/user-data/outputs`) is an implementation detail of the tool.
+        const name = path.slice(path.lastIndexOf('/') + 1);
+        record(path, name === '' ? path : name, body, messageAt);
+      }
+    }
+  }
+
+  return [...byKey.values()];
+}
+
+/**
  * Renders a conversation as Markdown.
  *
  * A transcript, not a summary: the whole point of importing these is that the reasoning is in the
@@ -165,6 +256,20 @@ export interface ClaudeExportOptions {
   readonly projectsByConversation?: ReadonlyMap<string, string>;
   /** Fallback folder for conversations that belong to no project. */
   readonly defaultFolder?: string;
+  /**
+   * What a conversation contributes to the vault.
+   *
+   * `documents` — only what Claude authored. The default, because it is what this source is *for*:
+   * Strata is an engineering knowledge base, and a thread about vitamin dosages that produced no
+   * document is not a knowledge-base entry. Importing 72 conversations to find 32 documents buried
+   * inside them is the wrong shape, and it is what this adapter did until D34.
+   *
+   * `transcripts` — the original behaviour, the back-and-forth as one document per thread.
+   * `both` — a document per artifact AND the transcript. Not the default: the artifact content is
+   * quoted verbatim inside the transcript, so `both` puts every document in the vault twice, which
+   * is worth having only when the reasoning around a document matters as much as the document.
+   */
+  readonly include?: 'documents' | 'transcripts' | 'both';
 }
 
 export interface ClaudeScanResult {
@@ -188,7 +293,9 @@ export function scanClaudeExport(
   options: ClaudeExportOptions = {},
 ): ClaudeScanResult {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  const defaultFolder = options.defaultFolder ?? 'Conversations';
+  const include = options.include ?? 'documents';
+  const defaultFolder =
+    options.defaultFolder ?? (include === 'documents' ? 'Documents' : 'Conversations');
 
   let parsed: unknown;
   try {
@@ -233,12 +340,6 @@ export function scanClaudeExport(
           ? (c['messages'] as unknown[])
           : [];
 
-      const transcript = renderTranscript(messages);
-      if (transcript.trim() === '') throw new ClaudeExportError('empty');
-      if (Buffer.byteLength(transcript, 'utf8') > maxBytes) throw new ClaudeExportError('too-large');
-
-      const normalizedBody = normalizeIngested(transcript);
-
       const project = options.projectsByConversation?.get(externalId);
       const folder: Derived<string> = {
         value: (project ?? defaultFolder).slice(0, MAX_FOLDER),
@@ -249,6 +350,64 @@ export function scanClaudeExport(
 
       const createdAt = asString(c['created_at']) ?? new Date(0).toISOString();
       const updatedAt = asString(c['updated_at']) ?? createdAt;
+
+      /**
+       * Documents Claude authored in this thread, each its own vault entry.
+       *
+       * Identity is `<conversation uuid>/<artifact id or path>`. Qualified by the conversation
+       * because a path like `/home/claude/build.js` is reused across unrelated threads — three of
+       * them in the export that surfaced this — and an unqualified path would make them one
+       * document that overwrites itself on every import.
+       */
+      let produced = 0;
+      if (include !== 'transcripts') {
+        for (const doc of authoredDocuments(messages)) {
+          const docId = `${externalId}/${doc.key}`;
+          if (seen.has(docId)) continue;
+          seen.add(docId);
+          if (Buffer.byteLength(doc.content, 'utf8') > maxBytes) {
+            failures.push({ externalId: docId, code: 'too-large' });
+            continue;
+          }
+          const body = normalizeIngested(doc.content);
+          const at = doc.createdAt ?? createdAt;
+          pending.push({
+            sourceId,
+            externalId: docId,
+            // The thread's name is NOT hashed here, unlike the transcript case. A document's identity
+            // is the document — renaming the conversation it was written in does not revise it.
+            contentHash: contentHash([doc.title, folder.value, doc.content].join('\u0000')),
+            title: normalizeIngested(doc.title),
+            excerpt: {
+              value: normalizeIngested(firstProse(body)),
+              provenance: 'heuristic',
+              derivedAt: updatedAt,
+            },
+            folder: { ...folder, value: normalizeIngested(folder.value) },
+            tags: { value: EMPTY_TAGS, provenance: 'heuristic', derivedAt: updatedAt },
+            createdAt: at,
+            updatedAt,
+            body,
+          });
+          produced += 1;
+        }
+      }
+
+      // A conversation that authored nothing is not a failure in documents mode — most conversations
+      // are just conversations. Reporting 60 failures for an ordinary export would bury the few that
+      // are real, which is the whole point of the failures channel.
+      if (include === 'documents') continue;
+
+      const transcript = renderTranscript(messages);
+      // In `both` mode a thread whose only content is an authored document has an empty transcript
+      // and is not empty in any sense the user would recognise — the document was already pushed.
+      if (transcript.trim() === '') {
+        if (produced > 0) continue;
+        throw new ClaudeExportError('empty');
+      }
+      if (Buffer.byteLength(transcript, 'utf8') > maxBytes) throw new ClaudeExportError('too-large');
+
+      const normalizedBody = normalizeIngested(transcript);
 
       // Hashed over EVERY input the stored document derives from — the conversation's name and its
       // folder as well as the transcript — and not from the raw JSON object.
@@ -262,8 +421,10 @@ export function scanClaudeExport(
       // vault kept the old title forever while the run reported success. Caught by running the CLI
       // twice, not by a unit test: the adapter was correct in isolation and the LOOP was wrong.
       //
-      // The Markdown adapter has always had this right — its hash covers frontmatter and body,
-      // because both derive the document. This is the same rule, stated for a different source.
+      // The rule is "hash every input the document derives from". The Markdown adapter was cited
+      // here as having always had it right; it did not — its hash covered the file's bytes while
+      // `folder` also derives from the scan root's NAME, which is not in the file. Same bug, same
+      // shape, found the same way, fixed in D30.
       const hash = contentHash([asString(c['name']) ?? '', folder.value, transcript].join('\u0000'));
 
       pending.push({

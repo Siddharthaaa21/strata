@@ -25,6 +25,7 @@ import {
   localIssuerAllowed,
   localIssuerSecret,
 } from '../../../lib/local-issuer.ts';
+import { safeInternalPath } from '../../../lib/safe-path.ts';
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
 
@@ -63,7 +64,17 @@ export async function GET(request: NextRequest) {
   const input = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64(payload)}`;
   const signature = createHmac('sha256', localIssuerSecret()).update(input).digest('base64url');
 
-  const response = NextResponse.redirect(new URL('/', url.origin));
+  /**
+   * Return to where the person was actually going.
+   *
+   * Validated exactly as `/auth/callback` validates its own `next`: a same-origin PATH only. A value
+   * starting `//` is protocol-relative and therefore absolute (`//evil.example`), so accepting one
+   * would turn this into an open redirect — and the auth route is where an open redirect gets used,
+   * because the domain in the address bar is genuinely ours right until it is not.
+   */
+  const next = safeInternalPath(url.searchParams.get('next')) ?? '/';
+
+  const response = NextResponse.redirect(new URL(next, url.origin));
   response.cookies.set(LOCAL_COOKIE, `${input}.${signature}`, {
     httpOnly: true,
     sameSite: 'lax',

@@ -1,6 +1,7 @@
 import { relativeTime } from '../lib/relative-time';
 import { loadActivity, loadAgentAccess } from '../lib/vault';
 import { RevokeButton } from './RevokeButton';
+import { ScopeEditor } from './ScopeEditor';
 import styles from './AgentAccessScreen.module.css';
 
 /**
@@ -24,7 +25,7 @@ import styles from './AgentAccessScreen.module.css';
  *    in the workspace as the most harmless one.
  */
 export async function AgentAccessScreen() {
-  const [{ agents }, activity] = await Promise.all([loadAgentAccess(), loadActivity()]);
+  const [{ agents, sources }, activity] = await Promise.all([loadAgentAccess(), loadActivity()]);
   const active = agents.filter((a) => a.revokedAt === undefined);
   const revoked = agents.filter((a) => a.revokedAt !== undefined);
 
@@ -50,7 +51,7 @@ export async function AgentAccessScreen() {
         ) : (
           <div className={styles.list}>
             {active.map((a) => (
-              <Agent key={a.principalId} agent={a} />
+              <Agent key={a.principalId} agent={a} sources={sources} />
             ))}
           </div>
         )}
@@ -66,7 +67,7 @@ export async function AgentAccessScreen() {
           */}
           <div className={styles.list}>
             {revoked.map((a) => (
-              <Agent key={a.principalId} agent={a} />
+              <Agent key={a.principalId} agent={a} sources={sources} />
             ))}
           </div>
         </div>
@@ -127,7 +128,13 @@ export async function AgentAccessScreen() {
   );
 }
 
-function Agent({ agent }: { agent: Awaited<ReturnType<typeof loadAgentAccess>>['agents'][number] }) {
+function Agent({
+  agent,
+  sources,
+}: {
+  agent: Awaited<ReturnType<typeof loadAgentAccess>>['agents'][number];
+  sources: Awaited<ReturnType<typeof loadAgentAccess>>['sources'];
+}) {
   const revoked = agent.revokedAt !== undefined;
   // `sourceIds === undefined` is the unnarrowed case, and it is the fact most worth noticing here.
   const unnarrowed = agent.sourceIds === undefined;
@@ -175,7 +182,15 @@ function Agent({ agent }: { agent: Awaited<ReturnType<typeof loadAgentAccess>>['
       {revoked ? (
         <p className={styles.note}>Revoked {relativeTime(agent.revokedAt!)}. Its tokens no longer authenticate.</p>
       ) : (
-        <RevokeButton principalId={agent.principalId} name={agent.name} />
+        <div className={styles.agentActions}>
+          <ScopeEditor
+            principalId={agent.principalId}
+            name={agent.name}
+            sourceIds={agent.sourceIds}
+            sources={sources.map((s) => ({ id: s.id, name: s.name }))}
+          />
+          <RevokeButton principalId={agent.principalId} name={agent.name} />
+        </div>
       )}
 
       {/* An agent whose creator was never recorded cannot be swept up by removing that person —

@@ -144,15 +144,31 @@ export async function claimsFromCookies(
   // has to be on the allowlist to see a single document.
   if (settings === undefined && localIssuerAllowed()) {
     const raw = cookies.get(LOCAL_COOKIE);
-    if (raw === undefined || raw === '') return undefined;
-    try {
-      return verifySessionToken(raw, {
-        issuer: LOCAL_ISSUER,
-        audience: 'authenticated',
-        hmacSecret: localIssuerSecret(),
-      });
-    } catch {
-      return undefined;
+    // FALLS THROUGH when there is no local cookie, rather than returning undefined.
+    //
+    // It used to return, and that made `STRATA_DEV_AUTH=1` an exclusive mode: a machine running
+    // `npm run dev:local` could not use a REAL provider session at all, because the Supabase cookie
+    // was never looked at. The failure is maximally confusing — the magic link works, the PKCE
+    // exchange succeeds, the cookie is written, and the very next request behaves as though none of
+    // it happened. Nothing in any log says why, because from this function's point of view nothing
+    // went wrong.
+    //
+    // Enabling the local issuer adds a way in for a person who has no provider account. It was
+    // never meant to remove the ordinary one, and treating it as a mode rather than an addition is
+    // what turned a convenience into a trap. Falling through weakens nothing: a provider session
+    // still has to verify against the real JWKS and still has to pass membership.
+    if (raw !== undefined && raw !== '') {
+      try {
+        return verifySessionToken(raw, {
+          issuer: LOCAL_ISSUER,
+          audience: 'authenticated',
+          hmacSecret: localIssuerSecret(),
+        });
+      } catch {
+        // A malformed or expired LOCAL token does return undefined. It is unambiguous about which
+        // issuer it claims, so falling through to check it against the provider would be nonsense.
+        return undefined;
+      }
     }
   }
 

@@ -12,7 +12,7 @@ import 'server-only';
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import pg from 'pg';
 import { AuthError, createAuthenticator } from '@strata/auth';
@@ -24,12 +24,17 @@ import {
   createEventStore,
   createSourceStore,
   fromPoolLike,
+  // The page size IS the store's ceiling, imported rather than restated. Two numbers that must agree
+  // are two numbers that can disagree, and the failure would be a page that silently drops rows.
+  MAX_RESULTS,
   requireConnectionString,
   type DocStore,
   type EventStore,
   type SourceStore,
 } from '@strata/storage';
-import { claimsFromCookies } from './session.ts';
+import { claimsFromCookies, LOCAL_ISSUER } from './session.ts';
+import { PATH_HEADER } from '../proxy.ts';
+import { redirectTarget } from './safe-path.ts';
 
 /**
  * Next loads `.env` from the app directory; ours lives at the monorepo root so the CLI scripts and
@@ -102,6 +107,34 @@ export interface Vault {
 }
 
 /**
+ * `?next=<path>` for the sign-in redirect, or '' when there is nothing safe to carry.
+ *
+ * A Server Component cannot see its own URL, so every signed-out visit used to lose its destination:
+ * open `/import` in a fresh browser and you signed in and landed on the Library. `proxy.ts` records
+ * the requested path on a header; this turns it into a parameter.
+ *
+ * ONLY A SAME-ORIGIN PATH is carried, and the check is deliberately the same one `/auth/callback`
+ * makes. A value starting `//` is a protocol-relative URL — `//evil.example` is absolute — so
+ * accepting it would make the sign-in redirect an open redirect, which is the one place an open
+ * redirect actually gets used: the domain in the address bar is genuinely ours right up to the
+ * moment it is not.
+ *
+ * `/login` itself is refused as a destination, or a failed sign-in would bounce back to the form
+ * carrying a `next` that points at the form.
+ */
+async function nextParam(): Promise<string> {
+  let requested: string | null = null;
+  try {
+    requested = (await headers()).get(PATH_HEADER);
+  } catch {
+    // No request context (a script, a test). Nothing to carry, which is not an error.
+    return '';
+  }
+  const target = redirectTarget(requested);
+  return target === undefined ? '' : `?next=${encodeURIComponent(target)}`;
+}
+
+/**
  * Thrown when the caller has no usable session.
  *
  * A distinct type because the page's response is a redirect, not an error page, and catching
@@ -153,7 +186,20 @@ export async function vault(): Promise<Vault> {
   try {
     // Membership, not the provider, decides whether this person gets a workspace. An authenticated
     // stranger is still a stranger, and being absent from the allowlist is the ordinary case.
-    scope = await auth.scopeFromSession(workspaceId, claims);
+    //
+    // `bindIdentity: false` for a local-issuer session, and this line is the whole fix for a trap
+    // that cost a magic link and an hour. `/auth/dev-login` mints a REAL session, so it wrote a real
+    // identity binding — and D16 gives a member exactly one. Signing in through the dev shortcut
+    // once therefore SPENT the binding, and the genuine Supabase identity was refused with
+    // `no-membership` from then on. A development convenience that locks you out of production
+    // authentication is a trap.
+    //
+    // This is the only place that can make the call: `resolveSession` is provider-agnostic by
+    // construction (ADR 0006 §5) and must not learn the name of our dev issuer, while this function
+    // already chose which branch produced these claims.
+    scope = await auth.scopeFromSession(workspaceId, claims, {
+      bindIdentity: claims.provider !== LOCAL_ISSUER,
+    });
   } catch (e) {
     throw new NotSignedIn(e instanceof AuthError ? e.kind : 'unknown');
   }
@@ -181,7 +227,7 @@ export async function requireVault(): Promise<Vault> {
   try {
     return await vault();
   } catch (e) {
-    if (e instanceof NotSignedIn) redirect('/login');
+    if (e instanceof NotSignedIn) redirect(`/login${await nextParam()}`);
     throw e;
   }
 }
@@ -217,7 +263,7 @@ export interface SourceListItem {
  * It is also the first time `svc-search`'s provenance-weighted ranking (ADR 0004) is reachable by a
  * human. It has been implemented and tested since M4 and, until now, only agents could use it.
  */
-export async function loadLibrary(query?: string): Promise<{
+export async function loadLibrary(query?: string, page = 1, folder?: string): Promise<{
   docs: DocListItem[];
   sources: SourceListItem[];
   /** The real number in scope, which is NOT `docs.length` — that is one clamped page. */
@@ -226,8 +272,18 @@ export async function loadLibrary(query?: string): Promise<{
   folders: string[];
   /** Echoed back so the view can render the search state without re-parsing the URL. */
   query: string;
+  /** 1-based, already clamped into range. The view renders it; it never recomputes it. */
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  /** Index of the first document on this page, 1-based. Zero when the vault is empty. */
+  firstOnPage: number;
+  lastOnPage: number;
+  /** The active folder, echoed back. Empty string means every folder. */
+  folder: string;
 }> {
   const q = query?.trim() ?? '';
+  const activeFolder = folder?.trim() ?? '';
   const { docs, sources, scope } = await requireVault();
 
   if (q !== '') {
@@ -245,6 +301,18 @@ export async function loadLibrary(query?: string): Promise<{
       query: q,
       total,
       folders: [...folders],
+      // Search returns ONE ranked page and says so, rather than offering paging it does not have.
+      // Offsetting a relevance ordering is a different feature — the interesting hits are at the
+      // top by construction, and a Next button under them would imply an ordering that keeps
+      // mattering as you walk down it.
+      page: 1,
+      pageCount: 1,
+      pageSize: hits.length,
+      // Echoed, not applied. A search is deliberately whole-vault; narrowing it by a folder pill
+      // left over from browsing is the bug the `key={q}` remount was added to prevent.
+      folder: '',
+      firstOnPage: hits.length === 0 ? 0 : 1,
+      lastOnPage: hits.length,
       docs: hits.map((d) => ({
         id: d.id,
         sourceId: d.sourceId,
@@ -267,17 +335,40 @@ export async function loadLibrary(query?: string): Promise<{
   // deriving either from its result describes the page rather than the vault — which is how the
   // Library came to report "50 docs" for a 312-document workspace and to hide any folder whose
   // documents all fell outside the newest fifty.
-  const [rows, srcs, total, folders] = await Promise.all([
-    docs.list(scope),
+  //
+  // The COUNT comes first, alone, because the page number has to be clamped against something real
+  // before it can be turned into an OFFSET. Asking for page 900 of a 2-page vault must render the
+  // last page, not an empty grid that looks exactly like an empty workspace.
+  //
+  // The folder is applied in SQL, not in the browser. It used to be a `useState` in the view
+  // filtering the page that had already been fetched — which meant a pill selected the documents in
+  // that folder *on this page*, so a folder whose documents all sat beyond the newest fifty rendered
+  // an empty grid. Paging makes that failure ordinary rather than rare, and the store has taken a
+  // `folder` option the whole time.
+  const folderOption = activeFolder === '' ? {} : { folder: activeFolder };
+
+  const total = await docs.count(scope, folderOption);
+  const pageCount = Math.max(1, Math.ceil(total / MAX_RESULTS));
+  const safePage = Number.isFinite(page) ? Math.min(Math.max(1, Math.floor(page)), pageCount) : 1;
+
+  const [rows, srcs, folders] = await Promise.all([
+    docs.list(scope, { ...folderOption, offset: (safePage - 1) * MAX_RESULTS }),
     sources.list(scope),
-    docs.count(scope),
+    // EVERY folder in scope, never just the active one — these are the pills, and deriving them
+    // from a filtered read would leave you inside a folder with no way back out.
     docs.folders(scope),
   ]);
 
   return {
     query: '',
     total,
+    folder: activeFolder,
     folders: [...folders],
+    page: safePage,
+    pageCount,
+    pageSize: MAX_RESULTS,
+    firstOnPage: total === 0 ? 0 : (safePage - 1) * MAX_RESULTS + 1,
+    lastOnPage: (safePage - 1) * MAX_RESULTS + rows.length,
     docs: rows.map((d) => ({
       id: d.id,
       sourceId: d.sourceId,
@@ -468,6 +559,51 @@ export async function revokeAgentAction(principalId: string): Promise<{ tokensRe
   return { tokensRevoked: report.tokensRevoked };
 }
 
+/**
+ * Changes what one agent reaches. Called only from a POST.
+ *
+ * Same authorization shape as `revokeAgentAction`, and for the same reason: the workspace is
+ * re-derived from the caller's session, never taken from the form, so a crafted `principalId`
+ * belonging to another workspace matches no row.
+ *
+ * `sourceIds` is validated against the sources this caller can actually SEE, not merely against the
+ * sources table. Their `Scope` already narrows `sources.list`, so an id they cannot see is rejected
+ * rather than written — otherwise this action would be a way to widen an agent onto a source the
+ * person granting it has no access to, using nothing but a guessed id.
+ *
+ * `undefined` means every source and `[]` means deny-all. They are opposites the whole way down;
+ * anything that collapses them here would silently rewrite the most consequential field on the
+ * screen.
+ */
+export async function rescopeAgentAction(
+  principalId: string,
+  sourceIds: readonly string[] | undefined,
+): Promise<{ grantsReplaced: number; tokensRepointed: number }> {
+  const { scope, sources: sourceStore } = await requireVault();
+  loadRootEnv();
+  const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId;
+
+  let requested: readonly SourceId[] | undefined;
+  if (sourceIds !== undefined) {
+    const visible = new Set((await sourceStore.list(scope)).map((s) => s.id as string));
+    const unknown = sourceIds.filter((id) => !visible.has(id));
+    if (unknown.length > 0) {
+      // Names no id back. The message says how many, not which — echoing an unrecognised id turns
+      // this action into a probe for what exists in workspaces the caller cannot see.
+      throw new Error(`${unknown.length} of those sources are not available in this workspace.`);
+    }
+    requested = sourceIds as readonly SourceId[];
+  }
+
+  const store = createAuthStore(fromPoolLike(pool()));
+  return store.rescopeAgent(
+    workspaceId,
+    principalId as PrincipalId,
+    requested,
+    new Date().toISOString(),
+  );
+}
+
 export interface RecentImport {
   readonly id: string;
   readonly title: string;
@@ -484,11 +620,14 @@ export interface RecentImport {
 export async function loadImport(): Promise<{
   sources: SourceListItem[];
   recent: RecentImport[];
+  failures: ImportFailure[];
 }> {
   const { sources, events, docs, scope } = await requireVault();
-  const [srcs, evts] = await Promise.all([sources.list(scope), events.recent(scope, 20)]);
+  // 40 rather than 20: failures and successes now come out of one list and are split below, so a
+  // single bad import could otherwise push every success off the end of the page.
+  const [srcs, evts] = await Promise.all([sources.list(scope), events.recent(scope, 40)]);
 
-  const titles = new Map((await docs.list(scope, { limit: 50 })).map((d) => [d.id, d.title]));
+  const titles = new Map((await docs.list(scope, { limit: MAX_RESULTS })).map((d) => [d.id, d.title]));
 
   return {
     sources: srcs.map((s) => ({
@@ -498,8 +637,53 @@ export async function loadImport(): Promise<{
       description: s.description,
       status: s.status,
     })),
+
     recent: evts
-      .filter((e) => e.status !== 'failed' && e.docId !== undefined && titles.has(e.docId))
-      .map((e) => ({ id: e.id, title: titles.get(e.docId!)!, occurredAt: e.occurredAt })),
+      .filter((e) => e.status !== 'failed')
+      .map((e) => ({
+        id: e.id,
+        // FALLS BACK to the file path instead of dropping the row.
+        //
+        // The title map is the newest `MAX_RESULTS` documents, so an event about anything older
+        // matched nothing and the row silently vanished — Recent imports quietly stopped being a
+        // record of what happened and became a record of what is currently near the top. The
+        // `externalId` is always present for a per-file event and identifies the same thing.
+        title: (e.docId !== undefined ? titles.get(e.docId) : undefined) ?? e.externalId ?? 'Untitled',
+        occurredAt: e.occurredAt,
+      })),
+
+    /**
+     * Failures, which this screen has never shown.
+     *
+     * Carried out of M3 and open ever since: failed events were filtered out because the Recent
+     * Imports list has no status indicator by design (README:24), so a failed row would read as a
+     * success. That was a correct reason not to put them in THAT list, and it was mistaken for a
+     * reason not to show them at all — so a file that failed to import was simply absent, with
+     * nothing anywhere to say why. ADR 0003 records failures precisely so a user can find out why a
+     * document did not appear; until now nothing served that purpose.
+     *
+     * It matters more since the upload buttons shipped (D24): a person can now cause a failure from
+     * the browser, and the browser was the one place that could not tell them.
+     */
+    failures: evts
+      .filter((e) => e.status === 'failed')
+      .map((e) => ({
+        id: e.id,
+        // The path, not a doc title — `docId` is absent precisely in the failure case.
+        externalId: e.externalId ?? 'unknown file',
+        // The sanitized message by contract (ADR 0003): a fixed per-code template, never a caught
+        // exception's text and never document content.
+        code: e.error?.code ?? 'unknown',
+        message: e.error?.message ?? '',
+        occurredAt: e.occurredAt,
+      })),
   };
+}
+
+export interface ImportFailure {
+  readonly id: string;
+  readonly externalId: string;
+  readonly code: string;
+  readonly message: string;
+  readonly occurredAt: string;
 }

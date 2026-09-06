@@ -62,3 +62,38 @@
   font-size: var(--text-small);
   color: var(--ink-subtle);
 }
+
+/* Failed imports. Same flat row as Recent imports — the handoff has no failure design, and
+   inventing a red-alert treatment for it would be exactly the drift R9 warns about. What marks it
+   as a failure is the heading it sits under and the reason on the row, not a colour scheme. */
+.failureRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-recent-import-row-gap);
+  padding: var(--space-recent-import-row-padding);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+/* The PATH is the identity of a failure — `docId` is absent precisely in this case, so this is the
+   only thing that tells you which file. Monospace because it is a path, and truncated from the
+   LEFT so `docs/very/long/path/README.md` keeps the filename rather than the directory. */
+.failurePath {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--ink-code);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.failureReason {
+  flex: none;
+  font-size: var(--text-small);
+  /* The same colour the sign-in form and the import controls use for a failure. There is no error
+     token — the handoff draws no error state — so this reuses the one established precedent. */
+  color: var(--source-claude-fg);
+}

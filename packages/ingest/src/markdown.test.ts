@@ -12,6 +12,8 @@ import { mintScope } from '@strata/core/scope-internal';
 import type { DocId, GrantId, PrincipalId, SourceId, WorkspaceId } from '@strata/core';
 import {
   PortError,
+  createMemoryFileSystemPort,
+  createNodeFileSystemPort,
   type FileEntry,
   type FileSystemPort,
   type FileStat,
@@ -248,7 +250,10 @@ test('a first import is new and mints an id', async () => {
 
 test('re-importing identical content is unchanged, and reuses the stored id', async () => {
   const { pending, failures } = await scan({ 'a.md': { text: '# A\n\nprose' } });
-  const known = { 'a.md': { docId: 'doc-existing' as DocId, contentHash: pending[0]!.contentHash } };
+  // `folder` must match too, or the drift check (D30) would report this as changed.
+  const known = {
+    'a.md': { docId: 'doc-existing' as DocId, contentHash: pending[0]!.contentHash, folder: pending[0]!.folder.value },
+  };
   const { decisions, events } = await runFor(pending, failures, known);
 
   assert.equal(decisions[0]?.outcome, 'unchanged');
@@ -258,7 +263,9 @@ test('re-importing identical content is unchanged, and reuses the stored id', as
 
 test('edited content is changed, not new — the id survives the edit', async () => {
   const { pending, failures } = await scan({ 'a.md': { text: '# A\n\nedited prose' } });
-  const known = { 'a.md': { docId: 'doc-existing' as DocId, contentHash: 'sha256:stale' } };
+  const known = {
+    'a.md': { docId: 'doc-existing' as DocId, contentHash: 'sha256:stale', folder: pending[0]!.folder.value },
+  };
   const { decisions, events } = await runFor(pending, failures, known);
 
   assert.equal(decisions[0]?.outcome, 'changed');
@@ -410,4 +417,180 @@ test('a huge frontmatter title cannot inflate a search payload', async () => {
     'big.md': { text: `---\ntitle: "${'T'.repeat(500_000)}"\n---\n\n# Doc\n\nprose` },
   });
   assert.equal(pending[0]?.title.length, MAX_TITLE);
+});
+
+// --- directory ignore rules (D30) --------------------------------------------------------------
+
+test('the node port never walks a vendored directory', async (t) => {
+  // The case that motivated this: pointing the ingest at a project root walked 1,233 markdown files
+  // in this repo where 77 are the project's own. Written against a REAL temp directory rather than
+  // the memory port, because the thing under test is the node walker itself.
+  const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const root = await mkdtemp(join(tmpdir(), 'strata-ignore-'));
+  t.after(async () => {
+    const { rm } = await import('node:fs/promises');
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await writeFile(join(root, 'README.md'), '# Mine\n');
+  for (const dir of ['node_modules', '.git', 'dist', 'coverage']) {
+    await mkdir(join(root, dir, 'nested'), { recursive: true });
+    await writeFile(join(root, dir, 'nested', 'THEIRS.md'), '# Theirs\n');
+  }
+  // A nested install, which is the normal shape of a workspace — matched on NAME, not path prefix.
+  await mkdir(join(root, 'packages', 'x', 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'packages', 'x', 'node_modules', 'DEEP.md'), '# Deep\n');
+  await writeFile(join(root, 'packages', 'x', 'KEEP.md'), '# Keep\n');
+
+  const entries = await createNodeFileSystemPort().scan(root);
+  const paths = entries.map((e) => e.path).sort();
+
+  assert.deepEqual(paths, ['README.md', 'packages/x/KEEP.md']);
+});
+
+test('a dot-directory holding real documentation is still walked', async (t) => {
+  // `.claude/` is this project's own documentation. A blanket "skip dotfiles" rule instead of a
+  // named list would silently drop exactly the files somebody goes looking for — which is the
+  // situation that prompted all of this.
+  const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const root = await mkdtemp(join(tmpdir(), 'strata-dotdir-'));
+  t.after(async () => {
+    const { rm } = await import('node:fs/promises');
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, '.claude'), { recursive: true });
+  await writeFile(join(root, '.claude', 'README.md'), '# Cookbook\n');
+
+  const paths = (await createNodeFileSystemPort().scan(root)).map((e) => e.path);
+  assert.deepEqual(paths, ['.claude/README.md']);
+});
+
+test('the ignore list is injectable, so it is not a hidden global', async (t) => {
+  const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const root = await mkdtemp(join(tmpdir(), 'strata-inject-'));
+  t.after(async () => {
+    const { rm } = await import('node:fs/promises');
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'node_modules', 'A.md'), '# A\n');
+
+  // An empty list restores the old behaviour, which is what makes the default a decision rather
+  // than an assumption baked into the walker.
+  const paths = (await createNodeFileSystemPort([]).scan(root)).map((e) => e.path);
+  assert.deepEqual(paths, ['node_modules/A.md']);
+});
+
+test('a re-ingest from a differently-named root REFILES the document (D30)', async () => {
+  // The bug this catches shipped and bit a real document: `folder` falls back to the scan root's
+  // basename for a top-level file, the root name is not in the file, so the hash was identical and
+  // the pipeline decided `unchanged`. A README ingested from a staging directory kept that
+  // directory's name as its folder, permanently, while the run reported success.
+  const file = { path: 'README.md', text: '# Handbook\n\nBody text.\n', modifiedAt: '2026-08-01T00:00:00.000Z' };
+
+  const fromA = await scanMarkdown(createMemoryFileSystemPort([file]), '/strata', SRC);
+  const fromB = await scanMarkdown(createMemoryFileSystemPort([file]), '/readme-stage', SRC);
+
+  assert.equal(fromA.pending[0]!.folder.value, 'strata');
+  assert.equal(fromB.pending[0]!.folder.value, 'readme-stage');
+
+  // The HASHES ARE EQUAL, deliberately — it is content identity, and it has to survive a move for
+  // rename detection to work at all (D20). The drift is caught by comparing the stored folder.
+  assert.equal(fromA.pending[0]!.contentHash, fromB.pending[0]!.contentHash);
+
+  const known = {
+    'README.md': {
+      docId: 'doc-existing' as DocId,
+      contentHash: fromB.pending[0]!.contentHash,
+      folder: 'readme-stage',
+    },
+  };
+  const { decisions } = await runFor(fromA.pending, fromA.failures, known);
+  assert.equal(decisions[0]?.outcome, 'changed', 'the stale folder would never be corrected');
+  assert.equal(decisions[0]?.docId, 'doc-existing', 'and it is the same document, not a new one');
+});
+
+test('identical bytes under the SAME root are unchanged — idempotence survives', async () => {
+  // The other half. If re-ingesting reported `changed` every time, every run would rewrite the whole
+  // vault and `unchanged` would never happen again.
+  const file = { path: 'docs/a.md', text: '# A\n\nBody.\n', modifiedAt: '2026-08-01T00:00:00.000Z' };
+  const scanned = await scanMarkdown(createMemoryFileSystemPort([file]), '/strata', SRC);
+  const known = {
+    'docs/a.md': {
+      docId: 'doc-existing' as DocId,
+      contentHash: scanned.pending[0]!.contentHash,
+      folder: scanned.pending[0]!.folder.value,
+    },
+  };
+  const { decisions } = await runFor(scanned.pending, scanned.failures, known);
+  assert.equal(decisions[0]?.outcome, 'unchanged');
+});
+
+test('a move keeps the hash, so renames stay detectable (D20)', async () => {
+  // `folder` is deliberately NOT in the hash. Rename detection matches identical hashes across
+  // different paths; folding the folder in made every move between folders look like a new
+  // document and broke three lifecycle tests — which is how the first attempt at D30 was caught.
+  const text = '# Guide\n\nBody.\n';
+  const before = await scanMarkdown(
+    createMemoryFileSystemPort([{ path: 'docs/guide.md', text, modifiedAt: '2026-08-01T00:00:00.000Z' }]),
+    '/strata',
+    SRC,
+  );
+  const after = await scanMarkdown(
+    createMemoryFileSystemPort([{ path: 'guides/guide.md', text, modifiedAt: '2026-08-01T00:00:00.000Z' }]),
+    '/strata',
+    SRC,
+  );
+
+  assert.equal(before.pending[0]!.folder.value, 'docs');
+  assert.equal(after.pending[0]!.folder.value, 'guides');
+  assert.equal(
+    before.pending[0]!.contentHash,
+    after.pending[0]!.contentHash,
+    'a moved file must hash identically or it can never be recognised as a rename',
+  );
+});
+
+test('source files are skipped silently — they were never documents (D32)', async () => {
+  // Harmless while the ingest pointed at a folder of Markdown; absurd once it could be pointed at a
+  // repository root, where it produced 147 failure events in one run — one per source file, written
+  // to the audit trail and the Import screen, burying the failures that mean something.
+  const { pending, failures } = await scan({
+    'a.md': { text: '# A\n\nBody.' },
+    'index.ts': { text: 'export const x = 1;' },
+    'package.json': { text: '{}' },
+    'styles.css': { text: 'body{}' },
+    'logo.png': { text: 'binary' },
+  });
+
+  assert.equal(pending.length, 1);
+  assert.deepEqual(failures, [], 'a .ts file is not a document that failed to import');
+});
+
+test('a near-miss extension still reports, because silence would look like a drop', async () => {
+  // `.mdx` and `.txt` are things somebody reasonably expects to import. Skipping them without a word
+  // would read as "seen and quietly discarded", which is the failure mode this whole rule avoids.
+  const { pending, failures } = await scan({
+    'a.mdx': { text: '# JSX' },
+    'notes.txt': { text: 'plain' },
+    'index.ts': { text: 'export const x = 1;' },
+  });
+
+  assert.equal(pending.length, 0);
+  assert.deepEqual(
+    failures.map((f) => f.externalId).sort(),
+    ['a.mdx', 'notes.txt'],
+    'the .ts must not appear, and both near-misses must',
+  );
 });

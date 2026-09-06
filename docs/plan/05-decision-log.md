@@ -908,3 +908,518 @@ the code that writes.**
 
 **Reversible?** Yes. The invariant is not: any hard delete of a principal silently rewrites history
 in a view built for incident response.
+
+## D24 — The Import screen's buttons finally do the thing they name · 2026-08-10
+
+**Context.** `Import` (Claude) and `Upload` (Local Markdown) had been inert since M3. The handoff
+marks them as visual endpoints (README:75-76) and that was read as a requirement rather than as the
+placeholder CLAUDE.md non-negotiable 5 says it is. Meanwhile both importers worked perfectly from a
+terminal for the whole of M5 and M7.
+
+**Decision.** Wire them, through **the CLI's own path** — same adapters, same `runIngest`, same
+`persistIngest`, same `Scope` minted from the caller's session. `apps/web/src/app/import/actions.ts`
+holds nothing but the two Server Actions, because `'use server'` publishes every export in a file as
+a remotely callable endpoint. GitHub keeps a disabled `Connect`, honestly, because no adapter exists
+behind it.
+
+**Rejected: a web-only ingest route.** A second way to write into the vault is a second thing to
+review, and the one nobody reviews is the one that ships a bug. Uploads go through `scanMarkdown`
+itself over an in-memory filesystem port, so identity, canonicalization, frontmatter rules, the
+failure taxonomy and the NUL check all apply because it is literally the same code.
+
+**Uploads can never prune, and there is no parameter to make them.** The CLI keeps `--prune` because
+an operator typed a sentence naming a whole source. A browser upload is the worst place to infer
+deletion: the user picked one file, or dragged one folder of a larger vault, so almost every stored
+document is legitimately absent. Missing counts are reported and never acted on.
+
+**It got worse before it got better.** D22 relabelled Claude's control from `Connect` to `Import`.
+That described the mechanism accurately and thereby made a dead control read as *more* actionable —
+a fidelity improvement that degraded the product. Naming a thing honestly is not the same as
+providing it.
+
+**Reversible?** Yes, and cheaply — the controls are additive and the backend predates them.
+
+## D25 — A session that ends after an hour is not a session · 2026-08-10
+
+**Context.** Supabase access tokens live ~1 hour. Nothing renewed them. `claimsFromCookies` verifies
+locally and returns `undefined` past `exp`, which every screen turns into a redirect to `/login`.
+The only client that can self-refresh is imported by the login form alone, so it never ran anywhere
+a signed-in person goes.
+
+On the free provider plan — two emails per hour, rolling — the remedy for an expired session was a
+resource we did not have. The app was shippable to teammates only in the sense that they could sign
+in once.
+
+**Decision.** `apps/web/src/proxy.ts` renews the credential when it is within five minutes of
+expiry, decided by decoding `exp` locally (`lib/token-expiry.ts`). Ordinary navigation costs one
+base64 decode and no network call.
+
+**What it is explicitly not.** Not an authorization check: it reads no membership, mints no `Scope`,
+and *discards* the `getUser()` result, because trusting it is how a middleware quietly becomes the
+access-control decision (ADR 0006 §5). Not a cache: ADR 0006 §4 stands, and a member revoked one
+second ago is refused on the very next request despite a just-renewed token. Renewal and permission
+are different questions; only the second is cached-never.
+
+**Rejected: `getUser()` on every request**, the pattern the provider's own docs show. It puts a
+network hop on every page render and contradicts `session.ts`'s central claim that verification is
+local. The skew check gets the same result for ~1/60th of the calls.
+
+**`/auth/callback` is excluded from the matcher.** It runs its own code exchange and writes its own
+cookies; two writers on one response race, and the loser's cookies are what the browser keeps —
+breaking sign-in in the name of preserving it.
+
+**Why this took four rounds to find.** An expired session and a broken one are indistinguishable
+from a browser: both are a bounce to `/login`. Three real causes were found and fixed first (the
+build-time `NEXT_PUBLIC_*` gap, the local issuer's early return, a spent identity binding), and each
+fix was followed by a test that had, by then, sat idle long enough to expire. Every retry looked
+like the previous bug not being fixed.
+
+This is D17/D22/D23's property in its temporal form: **writing is not the same as being read, and
+neither is tested by the code that writes.** The session was written correctly and read correctly.
+Nothing tested what it was an hour later, because the whole suite runs in under a second.
+
+**Reversible?** Yes — deleting the middleware restores the previous behaviour exactly.
+
+## D26 — The sign-in diagnostic was contradicting the provider, one line apart · 2026-08-10
+
+**Context.** A returning magic link failed and the log said, consecutively:
+
+```
+code exchange failed: PKCE code verifier not found in storage ... (code_verifier cookie present)
+```
+
+Both halves were produced by us. The provider said the verifier was missing; our own check said it
+was there.
+
+**Cause.** `@supabase/ssr` 0.12 keeps the PKCE verifier in **per-flow slots** —
+`<storageKey>-flow-<flowId>-code-verifier` — alongside a fixed `<storageKey>-code-verifier` and an
+index `<storageKey>-flows-code-verifier`. Requesting a new link writes a new slot and evicts older
+ones. Our check was `name.includes('-code-verifier')`, which matches all three, so it answered
+"present" whenever *any* flow was pending, including the one that had just displaced the link being
+clicked.
+
+**Decision.** Match only the slot pattern, and classify **three** states instead of two:
+
+| Slots | Provider said | Reason | What the person is told |
+| --- | --- | --- | --- |
+| 0 | anything | `browser` | Open it in the browser you asked from |
+| >0 | verifier not found | `stale` | **Open the newest email** — a new request cancels older ones |
+| >0 | anything else | `link` | Request a new one |
+
+**The middle row is the point.** It was previously collapsed into `link`, whose copy says "request a
+new one" — which is precisely what *caused* the failure, and on a plan capped at two emails an hour
+that advice spends the person's last one. The fix is not merely a better message: the working link
+was already in their inbox, and we were telling them to invalidate it.
+
+**Also added: `token_hash` support on the callback.** It needs no verifier, so it completes in a mail
+app's in-app browser, on a different device, and from an older email — the entire class of failures
+above. It is only produced if the email template sends `{{ .TokenHash }}`, so handling both forms
+lets that be changed later without a code change and costs a project that never changes it nothing.
+
+**Rejected: dropping PKCE for the implicit flow.** It returns tokens in the URL fragment, which a
+server never receives, and this app decides everything server-side.
+
+**Reversible?** Yes; both changes are additive.
+
+## D26 — Local development stops asking you to sign in · 2026-08-10
+
+**Context.** Three days were lost to sign-in bugs (see `06-auth-debug-log.md`). Even after all six
+causes closed, testing the app still began with pasting `/auth/dev-login?email=…` — login wearing a
+hat, and one more thing to get wrong while the real flow was still blocked on a dashboard change.
+
+**Decision.** With `STRATA_DEV_AUTH=1` **and** `STRATA_DEV_EMAIL` set, `/login` redirects to the
+local issuer instead of rendering the form. `npm run dev:inside` sets both. Opening the app signs
+you in.
+
+**This weakens no guard, and that is the whole point of where it lives.** `localIssuerAllowed()` is
+untouched — an explicit opt-in plus three independent proofs the process is not deployed — and
+`/auth/dev-login` re-checks it and 404s otherwise. The address must still be on the workspace
+allowlist to see one document. All that changed is who types the URL. Verified: on the production
+build `/login` still renders the form, and `localIssuerAllowed()` is false under `NODE_ENV=production`.
+
+**Rejected: minting the session in `proxy.ts`.** It is the shortest path and it would have made the
+proxy able to CREATE authority — directly against the property D25 just established, that the proxy
+decides nothing. A dev convenience is not worth blurring the one boundary that was hardest to get
+right.
+
+**The loop guard is load-bearing.** The redirect fires only when no local cookie exists. Once one
+does, arriving at `/login` means the session was refused for a real reason — not on the allowlist,
+membership revoked — and redirecting again would loop forever while hiding the message that explains
+it.
+
+**Reversible?** Yes. Unset `STRATA_DEV_EMAIL` and the form returns.
+
+## D27 — Re-scoping an agent without destroying it · 2026-08-10
+
+**Context.** The Agent Access screen had exactly one lever: Revoke. Narrowing an over-scoped agent
+meant destroying it, minting a replacement, and redeploying whatever held the token — enough friction
+that the realistic outcome is the over-scoped agent simply stays.
+
+**Decision.** `rescopeAgent` replaces the grant and moves the agent's live tokens onto it, in ONE
+statement. Grants are replaced rather than edited, so history survives: "what could this agent reach
+last Tuesday" is a question an incident review asks, and an in-place `UPDATE source_ids` destroys the
+answer.
+
+**Why one statement is not optional.** `grants_one_active` is a partial unique index, so re-scoping
+is revoke-then-insert; between those two writes every live token points at a **revoked** grant, and a
+token whose grant is revoked authenticates and then fails `mintScope` with `AuthError('revoked')`.
+Split across two calls, `pg.Pool` may route them to different connections — the reason this codebase
+uses data-modifying CTEs rather than BEGIN/COMMIT at all — so the window is not merely short. A crash
+between them leaves it open indefinitely, silently disabling an agent the UI has just reported as
+successfully re-scoped.
+
+**Mutation testing corrected the design's own explanation, and that is the entry worth keeping.** The
+first version of this comment claimed both `EXISTS` guards enforced CTE ordering. Only one does:
+
+- `replaced -> inserted` **is** ordering. Removing it fails seven tests — the old grant must leave the
+  partial index before the new row enters it.
+- `inserted -> moved` is **not**. Foreign keys are checked by AFTER triggers at statement end, so the
+  new grant exists whatever order the CTEs ran in. Removing this guard broke **nothing**, which is
+  exactly how a confident, wrong explanation survives review. Its real job is refusing to repoint live
+  tokens at a grant that was never inserted *because the re-scope was refused* — reachable only when a
+  principal is revoked while its tokens are not, a state `revokeAgent` never produces but an operator
+  can. The test that kills it now exists.
+
+**Rejected: a checkbox list.** `undefined` reaches every source, `[]` reaches none. A UI where
+unticking the last box silently means "everything" would be the most dangerous control in the app, so
+the mode is an explicit three-way choice and the checkboxes live inside one of its branches. Ticking
+nothing under "only the sources I pick" is refused by name rather than quietly submitted as deny-all.
+
+**Refusals are silent and return zero**, never throw: a revoked principal, and any principal of kind
+`user`. Re-scoping a revoked agent would mint a fresh ACTIVE grant onto a dead principal — a
+live-looking credential on something an operator believes they already shut off.
+
+**Reversible?** Yes. The old grant rows are kept, so any previous scope can be restored by setting it
+again.
+
+## D28 — The Library could only ever show fifty documents · 2026-08-10
+
+**Context.** `docs.list` is clamped to `MAX_RESULTS` (50). The Library reported the true total and
+said plainly that it was showing a subset, which is honest — and still meant every document past the
+newest fifty was **unreachable from the main screen**. The vault stood at 47 with upload buttons
+newly shipped (D24). "Honest about hiding your data" is not a feature.
+
+**Decision.** `docs.list` takes an `offset`; the Library takes `?page=`. The ceiling is unchanged —
+no single call returns more than 50 rows, which is the anti-exfiltration property an agent is held
+to. Paging asks for a *different* fifty, not a bigger page.
+
+**The tiebreak is the load-bearing part.** Ordering was `updated_at DESC` with no unique final key.
+This vault has 47 documents across **30 distinct timestamps** — seventeen share one with a
+neighbour, four sit on a single timestamp — so Postgres was free to return tied rows in any order
+between two queries. Stable enough to look correct on one page; under OFFSET it shows a document on
+page one *and* page two while another is never shown at all. `ORDER BY updated_at DESC, id DESC` in
+`list`, and `rank DESC, updated_at DESC, id DESC` in `search`. Held by a test that pages through 60
+documents sharing one timestamp and asserts the union is exactly 60.
+
+**Folder pills moved to the server, and that was not optional.** They were `docs.filter(...)` over
+the array already on screen, so a pill meant "documents in this folder *among the newest fifty*" — a
+folder whose documents all sat beyond that rendered an empty grid under its own pill. Paging turns
+that from a large-vault edge case into the ordinary one. `docs.list` and `docs.count` had both taken
+a `folder` option the whole time. The pills are now links carrying `?folder=`, and the round trip is
+the cost of the answer being correct.
+
+**A test caught a bug in the guard written to prevent bugs.** `Math.max(0, Math.floor(offset))` looks
+like it clamps everything. It does not clamp `NaN` — `Math.max(0, NaN)` is `NaN`, which reaches
+Postgres as the literal string `"NaN"` and 500s the page. `?page=abc` was enough. Now
+`Number.isFinite` decides, and every hostile value renders a real page.
+
+**Rejected: "Load more" accumulating into one long list.** It would mean either returning more than
+`MAX_RESULTS` from one call, breaking the ceiling for the sake of a scroll, or holding merged state
+in the client. Prev/Next keeps every call bounded and every URL shareable.
+
+**Rejected: numbered pages.** The handoff has no pagination design at all. Prev/Next plus "51–100 of
+120" is the smallest thing that makes the vault reachable; page numbers under a card grid is a design
+decision, and inventing one under deadline is how drift starts (R9).
+
+**Verified by using it**, not by the suite: 53 documents, page 1 returned 50 and page 2 returned 3,
+with **zero overlap** and a union covering the whole vault. The probe rows were removed afterwards.
+
+**Reversible?** Yes. `offset` defaults to 0 and `?page=` defaults to 1, so the previous behaviour is
+what you get by not passing them.
+
+## D29 — The GitHub adapter, and why it is ninety percent not GitHub code · 2026-08-10
+
+**Context.** GitHub was the last of the four connector rows with nothing behind it, and the only one
+of the four with a real API. "Indexes READMEs, ADRs, and PR descriptions" had been on screen since
+M3 describing a capability that did not exist.
+
+**Decision: the GitHub-specific code is FETCHING, and nothing else.** Once a file's text is in hand
+it is Markdown, and Markdown already has an adapter. Identity, frontmatter, title/excerpt/folder/tag
+derivation, `normalizeIngested`'s fencing, the NUL check and the whole failure taxonomy are
+`scanMarkdown`'s, reached through the same in-memory port a browser upload uses. `github.ts` has no
+`deriveTitle` of its own — if it did, the abstraction would be wrong, which is exactly what
+`packages/ingest/src/index.ts` has always said.
+
+**Network behind a port.** Every interesting case here is a failure — a truncated tree, a rate
+limit, a moved default branch, a binary file wearing a `.md` extension — and none is reachable from
+a test that has to hit api.github.com. 21 tests, all of them against a fake port except the four
+that exercise the HTTP layer through an injected `fetch`.
+
+**One Source per repository**, `src-github-<owner>-<repo>`. Not a shared `src-github`: `externalId`
+is the path *within* a repo and `README.md` exists in almost all of them, so two repositories on one
+source would silently overwrite each other. The consequence is that the Import screen had to render
+sources beyond its three fixed slots — a gap `screen-import` predicted in the abstract and which now
+had a real cause, so it closed with it.
+
+**Timestamps are the repository's `pushed_at`, for every file.** Per-file commit dates are accurate
+and cost **one API request each**; on the unauthenticated ceiling of 60 requests an hour a 40-file
+repo would die halfway. A coarse date beats a partial import. The consequence — every file from one
+repo shares a timestamp — is why D28's `id` tiebreak does real work rather than decorative work.
+
+**`--prune` is refused on an incomplete scan.** Pruning means "stored but absent is gone", which is
+only true if the listing was complete. A truncated tree or a `--max-files` cutoff produces a partial
+listing *identical in shape* to a complete one, so honouring `--prune` there would tombstone every
+document that merely fell outside the ceiling. The user asked to remove deleted files, not the ones
+we did not look at.
+
+**403 is both "forbidden" and "rate limited"** on this API, told apart only by
+`x-ratelimit-remaining`. Reporting a rate limit as an auth failure sends someone off to regenerate a
+token that was working perfectly, so they are distinguished and each carries its own fix.
+
+**No token is a first-class path.** Public repositories work with nothing configured, at 60
+requests/hour. `GITHUB_TOKEN` raises it to 5,000 and unlocks private repos. The token is sent as a
+bearer header and never placed in a URL, held by a test that asserts it appears nowhere in the
+request path — query strings reach access logs, proxies and referrers.
+
+**Verified by using it**, not only by the suite: `octocat/Spoon-Knife` from the CLI (1 new, then
+`unchanged 1` on a second run — idempotent), `facebook/react` reporting **1996 found, 12 imported,
+incomplete: true**, and `octocat/git-consortium` indexed **from the website**, reporting "2 new".
+
+**Still not built:** PR descriptions and Issues, which the row's copy also promises. Markdown files
+are the whole of it today.
+
+**Reversible?** Yes. Nothing else depends on it, and each repository is an independent Source.
+
+## D26 amendment — the loop guard tested the wrong thing · 2026-08-10
+
+D26's auto sign-in skipped the redirect when a local cookie was **present**. The local issuer's
+signing key is generated per process and never persisted, so **every dev server restart invalidates
+every local cookie** — presence then meant "you already have a session" about a cookie nothing could
+verify, stranding you on the sign-in form the branch exists to skip, with no way out but clearing
+cookies by hand. Restarts are constant; this fired on all of them.
+
+It now verifies the cookie instead. The guard's purpose survives: a cookie that verifies and still
+lands on `/login` was refused for a real reason, and redirecting again would loop while hiding the
+message that explains it. Found by opening the page after a restart — not by any test.
+
+
+## D30 — The Markdown hash did not cover everything the document derives from · 2026-08-10
+
+**Context.** `scanMarkdown` hashed the file's bytes: `contentHash(raw)`. But `folder` falls back to
+the scan ROOT's basename for a file at the top level, and the root name is not in the file. So the
+same README ingested from a differently-named directory produced an identical hash, the pipeline
+decided `unchanged`, nothing was written, and the vault kept the old folder forever — while the run
+reported success.
+
+**This is D22's bug, in the adapter D22 cited as having got it right.** `claude.ts` says in a comment
+that "the Markdown adapter has always had this right". It did not. Same bug, same shape, same
+adapter family, and the comment asserting otherwise is now corrected in place.
+
+**Found by using it, not by testing it.** A real README — the one the user had gone looking for —
+landed in the vault filed under `readme-stage`, the name of a temporary staging directory, and would
+have stayed there permanently. 34 markdown tests passed throughout. That makes four instances of the
+same property (D17, D22, D23, D25): **writing is not the same as being read, and neither is tested
+by the code that writes.**
+
+**Decision — arrived at on the second attempt.** The content hash stays **content identity**:
+`contentHash(raw)`, covering the file's bytes only. Derived-field drift is a separate question,
+answered separately: `findKnown` now returns the stored `folder`, and the pipeline treats a mismatch
+as `changed`.
+
+**The first attempt folded `folder` into the hash, and that was wrong.** It broke three lifecycle
+tests immediately. Rename detection (D20) works by matching identical hashes across different paths,
+so a hash that moves when the folder moves makes every cross-folder move look like a brand-new
+document and defeats the mechanism entirely. The failing tests caught a regression that the
+accompanying decision-log entry had already talked itself into calling "the honest trade" — the
+write-up was more confident than the code deserved, and the suite was right.
+
+Splitting the two concerns keeps both properties: the hash survives a move, and a stale folder is
+still corrected on the next ingest.
+
+**One-time cost: none.** Because the hash is unchanged from what shipped, existing documents do not
+rehash. The only documents rewritten are those whose stored folder genuinely disagrees with the
+current scan — observed live as `changed 1, unchanged 4`.
+
+**Verified live**, not only by the suite: re-ingesting one file from a renamed root reports
+`changed 1` where it previously reported `unchanged`, and re-running from the original root reports
+`unchanged 4` for the files that did not move.
+
+## D31 — The local ingest walked other people's documentation · 2026-08-10
+
+**Context.** `createNodeFileSystemPort` had no ignore rules. Pointing it at a project root — the
+obvious thing to do, and what the CLI's usage line invites — walked **1,233** Markdown files in this
+repository, of which **77** are the project's own. The other 1,156 were vendored package READMEs and
+changelogs.
+
+The practical effect was worse than noise: because running it at the root was unusable, nobody ever
+did, so this repository's own READMEs were never indexed. **The product did not contain its own
+documentation**, which is exactly the search that sent the user asking where a file was.
+
+**Decision.** `IGNORED_DIRECTORIES` — `node_modules`, `.git`, `.next`, `.turbo`, `.cache`, `dist`,
+`build`, `coverage`, `.venv`, `__pycache__` — matched on the directory NAME at any depth, because a
+nested `packages/x/node_modules` is the normal shape of a workspace install, not an edge case.
+Injectable, so the default is a decision rather than an assumption baked into the walker.
+
+**Rejected: skipping dot-directories.** It is the shorter rule and it would have silently dropped
+`.claude/`, which holds this project's own documentation and is precisely the file somebody went
+looking for. A rule that hides the thing you are searching for is worse than no rule.
+
+**Skipped silently, unlike a symlink.** A symlink is reported because someone who placed one there
+expects its target imported. Nobody expects `node_modules` in their knowledge base, and reporting
+1,156 skips would bury the failures that matter.
+
+**Reversible?** Yes — pass `[]` and the previous behaviour returns, which a test asserts.
+
+
+## D32 — Committing Markdown ingests it, and two bugs that only a repo-root scan could reveal · 2026-08-10
+
+**Context.** The vault was a snapshot, not a mirror. A document written after the last manual ingest
+simply did not exist as far as the Library was concerned — which is exactly how this repository's own
+READMEs went missing for weeks, and how a user ended up asking where a file was rather than searching
+for it.
+
+**Decision.** A `post-commit` git hook re-ingests the repository's Markdown. Four properties, each one
+a way this could otherwise become the tool everybody disables:
+
+1. **post-commit, never pre-commit.** Ingest is a side effect of committing, not a condition of it.
+   A pre-commit hook that needs a database blocks a commit on a plane.
+2. **Never exits non-zero.** The commit has already succeeded; a failure here must not print an error
+   over work that went fine.
+3. **Runs detached**, logging to `.git/strata-ingest.log`. Nobody waits seconds for a commit.
+4. **Does nothing when no Markdown changed**, which is most commits.
+
+**No `--prune`, deliberately.** A commit is not evidence that a document should be deleted — you may
+have committed on a branch that simply does not contain it. Removal stays explicit, at a terminal.
+
+**The source of truth is `scripts/hooks/`, not `.git/hooks/`**, which git does not track: a hook that
+lives only there exists on exactly one machine. `npm run hooks:install` copies it into place and
+**refuses to overwrite a hook it did not write** — silently replacing somebody's commit-signing hook
+is how a tool becomes untrustworthy the first time it costs them work.
+
+### The reconcile, which had to happen once
+
+Existing documents carried sub-root paths (`adr/0001-…`) from ingests pointed at `docs/` and
+`context-graph/nodes/`; the hook scans the repository ROOT. Without reconciling, every document would
+have duplicated at a new path.
+
+It did not, and the reason is a feature working as designed: **`renamed 34`**. Rename detection (D20)
+matched the old paths to the new ones by content hash and kept the original `DocId`s — which is
+precisely the property the first attempt at D30 would have destroyed by folding `folder` into the
+hash. 38 new, 34 renamed, 5 changed, 13 tombstoned. No duplicates, no lost identity.
+
+### Bug found by running it: 147 failures per commit
+
+The root scan reported **147 `unsupported-type` failures** — one per `.ts`, `.json`, `.css` file in
+the repository. Harmless while the ingest was pointed at a folder of Markdown; absurd once it could
+be pointed at a repository root, where every commit would have written 147 bogus failure events into
+the audit trail and onto the Import screen, burying the failures that mean something.
+
+**A file whose extension was never a candidate is now skipped silently.** It is not a document that
+failed to import; it was never a document. Same judgement D31 makes about `node_modules` versus a
+symlink.
+
+**But a NEAR-MISS still reports.** `.mdx`, `.txt`, `.rst`, `.org`, `.adoc`, `.textile` are things
+somebody reasonably expects to import, and silence there would read as "seen and quietly discarded".
+The test asserts both halves: a `.ts` must not appear in failures, and both near-misses must.
+
+Result: 147 failures to **0**, and a second run reports `unchanged 77` — idempotent.
+
+**Verified by running the installed hook**, not by reasoning about it: against a commit touching no
+Markdown it exits 0 and writes nothing; against one that does, it logs a timestamped entry and
+ingests 77 files with 0 failures.
+
+**Reversible?** `npm run hooks:install -- --uninstall`, or `STRATA_INGEST_HOOK=0 git commit` for one.
+
+
+## D33 — A fixing pass over what already existed · 2026-08-10
+
+No new features. Five defects, all in shipped code, four of them found by opening a page rather than
+by running the suite — which stayed green through every one of them.
+
+**1. The Reader clipped code blocks.** `.code` had no `overflow-x`, so any line wider than the 660px
+reading column was cut off at the edge with no indication and no way to reach it. An ASCII diagram
+lost its right-hand half; a directory tree lost the description beside every entry. The document
+looked fine and was unreadable, which is the worst combination. Now `overflow-x: auto` with
+`min-width: 0` — the flex child needs both or it pushes the whole column wide instead of scrolling.
+`white-space: pre` rather than wrapping, because wrapping a diagram destroys the alignment carrying
+its meaning.
+
+**2. A control that did the wrong thing.** `ConnectorRow` chose its control from `kind` alone, so the
+`src-claude-code` source — recovered transcripts, `kind: 'claude'` — rendered Claude's `Import`
+button. That opens a Claude-EXPORT file picker and writes to `src-claude`: clicking it would have
+imported a `conversations.json` into a different source than the row you clicked. Indexed GitHub
+repositories had a milder version, their `Connect` starting a NEW repo rather than re-syncing that
+one.
+
+Rows are now either SLOTS (start an import) or RECORDS (state what exists, offer nothing).
+Re-syncing an existing source is a CLI operation, and pretending otherwise on this screen is how a
+control ends up doing something other than what its row says.
+
+**3. Failed imports finally reach the user.** Open since M3. Failures were excluded from Recent
+Imports for a correct reason — that list has no status indicator by design (README:24), so a failed
+row reads as a success — and that correct reason was mistaken for a reason to show them nowhere. A
+file that failed to import was simply absent, with nothing anywhere to say why, while ADR 0003 states
+that recording failures exists precisely so a user can find out.
+
+They now have their own section above Recent imports: file path, sanitized per-code reason, absent
+entirely when there is nothing to report. Urgent rather than merely open since D24 — a person can now
+cause a failure from the browser, and the browser was the one place that could not tell them.
+
+**4. Recent imports silently dropped rows.** Titles were resolved from `docs.list(limit: 50)`, so an
+event about anything outside the newest fifty matched nothing and the row vanished. The list quietly
+stopped being a record of what happened and became a record of what is currently near the top. It now
+falls back to the event's `externalId`, which is always present for a per-file event and identifies
+the same thing.
+
+**5. The source description rewrote itself on every run.** `ingest.mjs` set it to
+`Markdown ingested from ${basename(target)}` — the folder just scanned. One Markdown source is fed
+from several folders over its life, so after a one-off ingest of a scratch directory the Import
+screen read "Markdown ingested from badfiles", describing the whole source by the last thing that
+touched it.
+
+**The pattern, again.** Five defects, 351 passing tests throughout. Four were visible the moment
+someone looked at the screen. This is D17/D22/D23/D25/D30's property for the sixth time — **writing
+is not the same as being read** — and the practical conclusion is not "write more tests" but "open
+the page", which is now how each of these was found.
+
+---
+
+## D34 — The Claude adapter imported conversations and threw away the documents · 2026-08-16
+
+**Decision.** `scanClaudeExport` defaults to `include: 'documents'` — a conversation contributes the
+documents Claude authored in it, not the transcript. `transcripts` keeps the original behaviour and
+`both` keeps each document alongside its thread.
+
+**What was wrong.** The adapter skipped `tool_use` blocks with a comment calling them "the model's
+plumbing, not the conversation". That is right for rendering a transcript and wrong for finding
+documents, because on claude.ai an artifact *is* a `tool_use` block — `name: 'artifacts'`, body in
+`input.content` — and a sandbox file is `name: 'create_file'`, body in `input.file_text`. The rule
+that kept plumbing out of a body was also discarding every document the source exists to collect.
+
+**How it surfaced, and this is the part worth keeping.** The first import of a real export produced
+72 documents and the owner's reaction was that none of it was what they wanted — vitamin dosages and
+credit-card comparisons in a vault scoped as an engineering knowledge base. Reading the export
+directly rather than trusting the import found 32 authored documents inside those 72 conversations,
+including the two they had named from memory. **The importer reported complete success while
+inverting its own purpose.** No test could have failed here: every test asserted that a conversation
+becomes a document, which is exactly what it did.
+
+**Identity.** `<conversation uuid>/<artifact id or path>`. Qualified by the conversation because
+`/home/claude/build.js` appeared in three unrelated threads in one export; unqualified they collapse
+to one document that overwrites itself on every import. Within a thread, last write wins and earlier
+versions are counted rather than emitted — a document written three times is one document with three
+revisions. Emitting each would rebuild the collision-and-flip-flop that R2's review found in the
+Markdown adapter.
+
+**Not implemented, deliberately:** replaying `str_replace` and artifact `update` chains to
+reconstruct final state. That is a second implementation of the tool's own semantics, and a subtle
+error stores a document that never existed. Edits count as revisions; kept content is content a tool
+call actually carried.
+
+**Why `both` is not the default.** Artifact content is quoted verbatim inside the transcript, so
+`both` stores every document twice and doubles what search ranks over.
+
+**The pattern.** D17/D22/D23/D25/D30/D33 were "writing is not the same as being read". This is the
+next one along: **an adapter that runs, reports success, and collects the wrong thing.** The tests
+described the implementation faithfully; nobody had checked the implementation against the purpose.
+Found by reading the source data, which is the only place that comparison can be made.

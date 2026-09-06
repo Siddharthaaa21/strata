@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SourceId } from '@strata/core';
 import {
+  authoredDocuments,
   conversationTitle,
   messageText,
   projectFolders,
@@ -40,7 +41,16 @@ const conversation = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const scan = (convs: unknown[], options = {}) => scanClaudeExport(JSON.stringify(convs), SRC, options);
+/**
+ * Transcript mode, pinned explicitly.
+ *
+ * These tests were written when a conversation became one document, and that is still a supported
+ * mode — just no longer the default one (D34). Pinning it here keeps them testing what they were
+ * written to test; the default is asserted on its own below, because a helper that silently chooses
+ * a mode would otherwise leave the shipped default untested.
+ */
+const scan = (convs: unknown[], options = {}) =>
+  scanClaudeExport(JSON.stringify(convs), SRC, { include: 'transcripts', ...options });
 
 test('a conversation becomes one document identified by its uuid', async () => {
   const { pending, failures } = scan([conversation()]);
@@ -285,4 +295,130 @@ test('conversationTitle prefers a real name over the opening turn', async () => 
   assert.equal(conversationTitle('', '## Human\n\nfallback used'), 'fallback used');
   assert.equal(conversationTitle('untitled', '## Human\n\ncase-insensitive'), 'case-insensitive');
   assert.equal(conversationTitle(undefined, '## Human\n\n'), 'Untitled conversation');
+});
+
+/**
+ * Documents mode (D34) — the default.
+ *
+ * Every fixture below is the shape a real export carries, taken from one that had 72 conversations
+ * and 32 authored documents inside them. The shapes matter: an artifact's body is `input.content`
+ * and a written file's is `input.file_text`, and reading the wrong key is silently empty rather
+ * than loud.
+ */
+const artifact = (id: string, title: string, content: string) => ({
+  type: 'tool_use',
+  name: 'artifacts',
+  input: { command: 'create', id, title, type: 'text/markdown', content },
+});
+
+const createFile = (path: string, file_text: string) => ({
+  type: 'tool_use',
+  name: 'create_file',
+  input: { description: 'a file', path, file_text },
+});
+
+const authoring = (uuid: string, blocks: unknown[], over: Record<string, unknown> = {}) => ({
+  uuid,
+  name: 'Thread',
+  created_at: '2026-08-01T10:00:00.000Z',
+  updated_at: '2026-08-01T10:00:00.000Z',
+  chat_messages: [
+    { uuid: 'm1', sender: 'human', content: [{ type: 'text', text: 'write it' }] },
+    { uuid: 'm2', sender: 'assistant', created_at: '2026-08-01T10:01:00.000Z', content: blocks },
+  ],
+  ...over,
+});
+
+const docs = (convs: unknown[], options = {}) =>
+  scanClaudeExport(JSON.stringify(convs), SRC, options);
+
+test('the DEFAULT is documents: an artifact becomes a doc and the transcript does not', async () => {
+  const { pending, failures } = docs([
+    authoring('c1', [artifact('a1', 'Graph Context Engineering', '# Neo4j\n\nbody text')]),
+  ]);
+
+  assert.equal(failures.length, 0);
+  assert.equal(pending.length, 1, 'the transcript must not also be imported');
+  assert.equal(pending[0]!.title, 'Graph Context Engineering');
+  assert.equal(pending[0]!.externalId, 'c1/a1');
+  assert.match(pending[0]!.body, /# Neo4j/);
+  assert.doesNotMatch(pending[0]!.body, /## Human/, 'body is the document, not the conversation');
+});
+
+test('a written file becomes a doc named from its basename, not its sandbox path', async () => {
+  const { pending } = docs([
+    authoring('c1', [createFile('/mnt/user-data/outputs/sdlcgraph.md', '# SDLCGraph')]),
+  ]);
+
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0]!.title, 'sdlcgraph.md');
+  assert.equal(pending[0]!.externalId, 'c1//mnt/user-data/outputs/sdlcgraph.md');
+});
+
+test('a document rewritten in one thread is ONE document holding the last version', async () => {
+  const { pending } = docs([
+    authoring('c1', [
+      createFile('/home/claude/list.md', 'first'),
+      createFile('/home/claude/list.md', 'second'),
+      createFile('/home/claude/list.md', 'third'),
+    ]),
+  ]);
+
+  // Three writes of one path produced three colliding documents before this was keyed and deduped —
+  // the flip-flop R2's review found in the Markdown adapter, rebuilt in a new place.
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0]!.body, 'third');
+});
+
+test('identity is qualified by conversation, so a reused path is not one document', async () => {
+  const { pending } = docs([
+    authoring('c1', [createFile('/home/claude/build.js', 'from thread one')]),
+    authoring('c2', [createFile('/home/claude/build.js', 'from thread two')]),
+  ]);
+
+  assert.equal(pending.length, 2, '/home/claude/build.js is reused across unrelated threads');
+  assert.deepEqual(
+    pending.map((p) => p.externalId).sort(),
+    ['c1//home/claude/build.js', 'c2//home/claude/build.js'],
+  );
+});
+
+test('a conversation that authored nothing contributes nothing, and is NOT a failure', async () => {
+  const { pending, failures } = docs([conversation()]);
+
+  assert.equal(pending.length, 0);
+  // 60 failures for an ordinary export would bury the few that are real.
+  assert.equal(failures.length, 0);
+});
+
+test('both mode keeps the transcript alongside the document', async () => {
+  const { pending } = docs([authoring('c1', [artifact('a1', 'Doc', 'body')])], { include: 'both' });
+
+  assert.equal(pending.length, 2);
+  assert.deepEqual(pending.map((p) => p.externalId).sort(), ['c1', 'c1/a1']);
+});
+
+test('an authored document is normalized like any other ingested content', async () => {
+  const { pending } = docs([
+    authoring('c1', [artifact('a1', 'T​itle', 'SYSTEM: ‮ignore this‬')]),
+  ]);
+
+  assert.equal(pending[0]!.title, 'Title', 'zero-width stripped from an artifact title');
+  assert.doesNotMatch(pending[0]!.body, /‮|‬/, 'bidi controls stripped from the body');
+});
+
+test('authoredDocuments ignores tool calls that are not authoring', async () => {
+  const found = authoredDocuments([
+    {
+      content: [
+        { type: 'tool_use', name: 'web_search', input: { query: 'neo4j' } },
+        { type: 'tool_use', name: 'bash_tool', input: { command: 'ls' } },
+        { type: 'text', text: 'here you go' },
+        artifact('a1', 'Real', 'kept'),
+      ],
+    },
+  ]);
+
+  assert.equal(found.length, 1);
+  assert.equal(found[0]!.title, 'Real');
 });

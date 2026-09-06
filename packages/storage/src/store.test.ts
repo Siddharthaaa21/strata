@@ -511,3 +511,83 @@ test('query punctuation and operators still cannot error', async () => {
     assert.ok(Array.isArray(hits), `"${q}" must return a list, never throw`);
   }
 });
+
+// --- paging past MAX_RESULTS ------------------------------------------------------------------
+//
+// The Library could only ever show the newest 50 documents. Everything older was unreachable from
+// the main screen -- not truncated-and-labelled, but absent. These tests hold the two properties
+// that make paging trustworthy: every document is reachable, and none is reachable twice.
+
+/** `n` documents that all share ONE `updatedAt`, which is the case that breaks naive paging. */
+async function tiedDocs(store: Awaited<ReturnType<typeof freshStore>>['store'], n: number) {
+  for (let i = 0; i < n; i++) {
+    await store.upsert(
+      scopeFor(WS_A),
+      doc({
+        id: `doc-${String(i).padStart(3, '0')}` as DocId,
+        externalId: `f${i}.md`,
+        // Deliberately identical. The live vault has 47 documents across 30 timestamps, so ties are
+        // the normal case here, not a contrived one.
+        updatedAt: '2026-07-28T00:00:00.000Z',
+      }),
+    );
+  }
+}
+
+test('offset reaches documents beyond MAX_RESULTS', async () => {
+  const { store } = await freshStore();
+  await tiedDocs(store, 60);
+
+  const first = await store.list(scopeFor(WS_A));
+  const second = await store.list(scopeFor(WS_A), { offset: MAX_RESULTS });
+
+  assert.equal(first.length, MAX_RESULTS);
+  assert.equal(second.length, 10, 'the last ten documents were unreachable before offset existed');
+});
+
+test('paging covers every document exactly once, even when timestamps tie', async () => {
+  // The property the `id` tiebreak exists for. Without it Postgres may order tied rows differently
+  // between two queries, and a document appears on both pages while another appears on neither --
+  // silent, and invisible unless you count.
+  const { store } = await freshStore();
+  await tiedDocs(store, 60);
+
+  const seen: string[] = [];
+  for (let offset = 0; offset < 60; offset += MAX_RESULTS) {
+    seen.push(...(await store.list(scopeFor(WS_A), { offset })).map((d) => d.id));
+  }
+
+  assert.equal(seen.length, 60);
+  assert.equal(new Set(seen).size, 60, 'a document was returned on two different pages');
+});
+
+test('the same page twice returns the same documents in the same order', async () => {
+  const { store } = await freshStore();
+  await tiedDocs(store, 60);
+
+  const a = await store.list(scopeFor(WS_A), { offset: 25 });
+  const b = await store.list(scopeFor(WS_A), { offset: 25 });
+  assert.deepEqual(a.map((d) => d.id), b.map((d) => d.id));
+});
+
+test('offset never lets one call exceed MAX_RESULTS', async () => {
+  // Paging asks for a DIFFERENT fifty, never a bigger page. The ceiling is what an agent is held to.
+  const { store } = await freshStore();
+  await tiedDocs(store, 60);
+
+  const page = await store.list(scopeFor(WS_A), { limit: 10_000, offset: 0 });
+  assert.ok(page.length <= MAX_RESULTS);
+});
+
+test('a hostile offset from the query string cannot error the page', async () => {
+  // Every one of these is reachable by hand-editing `?page=` in the address bar. A negative OFFSET
+  // is a Postgres error and a fractional one is silently truncated, so neither is left to the
+  // database to interpret.
+  const { store } = await freshStore();
+  await tiedDocs(store, 3);
+
+  for (const offset of [-1, -999, 1.5, Number.NaN]) {
+    const rows = await store.list(scopeFor(WS_A), { offset });
+    assert.ok(Array.isArray(rows), `offset ${offset} threw instead of returning rows`);
+  }
+});

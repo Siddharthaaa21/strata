@@ -90,11 +90,17 @@ waiting on `risk-tenancy` — they are waiting on milestone sequencing (M4/M6 ha
 
 **Done when** all three handoff screens are pixel-close against fixtures. — **Met.**
 
-Open, carried out of M3 rather than closed inside it: failed `ImportEvent`s are excluded from the
-Recent Imports list (the list has no status indicator by design, so a failed row reads as a
-success). ADR 0003 argues failures must not be silent. Recording and rendering are different
-things and this settles only the latter for this one list; **where a failed import surfaces to the
-user is unresolved** and belongs with the Import screen's real-data pass in M4.
+~~Open, carried out of M3~~ — **CLOSED 2026-08-10 (D33).** Failed `ImportEvent`s stay out of the
+Recent Imports list, which is correct: that list has no status indicator by design (README:24), so a
+failed row there would read as a success. What was wrong is that a correct reason to keep them out of
+*that list* was mistaken for a reason to show them *nowhere*, and the gap stayed open from M3 through
+M7 — ADR 0003 records failures precisely so a user can learn why a document did not appear, and until
+now nothing served that purpose.
+
+They now have their own section above Recent imports, showing the file path and the sanitized
+per-code reason, and absent entirely when there is nothing to report. It became urgent rather than
+merely open once the upload buttons shipped (D24): a person can now cause a failure from the browser,
+and the browser was the one place that could not tell them.
 
 ---
 
@@ -187,7 +193,26 @@ stand-in for a real one.
       SQLite blobs that already broke once (Cursor 3.0, April 2026). "Best effort with a version
       check" was rejected: the failure arrives on an update the user did not know was significant,
       and they blame Strata.
-- [ ] GitHub adapter — ships **not connected** by default. The only true connector of the four.
+- [x] GitHub adapter — landed 2026-08-10 (D29). The only true connector of the four, and the only
+      one that can re-sync rather than re-import. Ships **not connected** by default.
+
+      Ninety percent of it is not GitHub code: once a file's text is in hand it is Markdown, so
+      identity, frontmatter, derivation, fencing and the failure taxonomy are `scanMarkdown`'s,
+      reached through the same in-memory port a browser upload uses. What is GitHub-specific is
+      fetching, and it sits behind a port because every interesting case is a failure no test can
+      reach over the network.
+
+      One Source per repository, which forced the Import screen to render sources beyond its fixed
+      slots — a gap the graph had predicted in the abstract and which finally had a cause. Works
+      unauthenticated on public repos at 60 requests/hour; `GITHUB_TOKEN` raises that to 5,000 and
+      unlocks private ones. `--prune` is refused on an incomplete scan, because absence only proves
+      deletion against a complete listing.
+
+      Proven against real repositories, not only fakes: `octocat/Spoon-Knife` (1 new, then
+      `unchanged 1` — idempotent), `facebook/react` (1996 found, 12 imported, `incomplete: true`),
+      and `octocat/git-consortium` indexed from the website.
+
+      Not built: PR descriptions and Issues, which the row's copy also promises.
 - [x] Fixture-based tests per adapter; no live network in tests — ADR 0003 specifies an injected
       filesystem port for exactly this. The Claude adapter takes text rather than a port: it is one
       file a user hands us, not a tree to walk, and a port there would be ceremony around readFile.
@@ -312,9 +337,27 @@ Audience decided 2026-08-04: a few teammates, one shared workspace (ADR 0006 sec
 - [x] Two findings surfaced on the row rather than left to be deduced: an agent that has **never
       been used**, and an agent with **no recorded creator** — which removing a member cannot sweep
       up, the exact gap `--by` was made mandatory to close.
-- [ ] **Carried out:** per-agent re-scoping from the UI, and the access log rendered as a screen.
-      Re-scoping has a sharp edge worth designing rather than improvising — the one-active-grant
-      index forces revoke-then-insert, which is how a token ends up pointing at a revoked grant.
+- [x] The access log rendered as a screen — landed 2026-08-09 (D23). Building it found that the
+      table had been filled correctly for a whole milestone while its only reader could not see its
+      most important rows: a smoke test was deleting the principals its own log entries were
+      attributed to.
+- [x] Per-agent re-scoping from the UI — landed 2026-08-10 (D27). The sharp edge was real and is
+      resolved in ONE statement: `grants_one_active` forces revoke-then-insert, and
+      `agent_tokens_grant_belongs_to_principal` means the token has to move in the same breath, or a
+      live token is left pointing at a revoked grant and the agent is dead while the UI reports
+      success.
+
+      Mutation testing corrected the design's own explanation. Two `EXISTS` guards chain the CTEs;
+      the first is genuinely ordering (drop it and seven tests fail, because the old grant must leave
+      the partial index before the new row enters it), and the second is **not** — foreign keys fire
+      as AFTER triggers at statement end, so ordering is irrelevant there. Its real job is stopping
+      live tokens being repointed at a grant that was never inserted *because the re-scope was
+      refused*. Removing it originally broke nothing at all, which is how the wrong explanation
+      survived; the missing test now kills it.
+
+      The UI offers three explicit modes rather than a checkbox list, because an empty list and
+      "every source" are opposites — a control where unticking the last box silently means
+      *everything* would be the most dangerous thing in the app.
 
 **Done when** a user can see and revoke what each connected agent can reach. — **Met 2026-08-09**,
 by opening the page and revoking a real agent through it, not by a passing test suite (D17).

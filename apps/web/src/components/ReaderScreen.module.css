@@ -148,6 +148,26 @@
   font-family: var(--font-mono);
   font-size: var(--text-nav);
   color: var(--ink-code);
+
+  /*
+   * A code block SCROLLS; it does not silently clip.
+   *
+   * Without this, any line wider than the 660px reading column was cut off at the edge with no
+   * indication and no way to reach it — an ASCII diagram lost its right-hand half, and a directory
+   * tree lost the description beside every entry. The document looked fine and was unreadable, which
+   * is the worst combination.
+   *
+   * `pre` rather than wrapping: wrapping a diagram or an indented tree destroys the alignment that
+   * is carrying the meaning. Scrolling keeps it intact and reachable.
+   *
+   * `min-width: 0` on the flex/grid child is what actually lets it shrink — without it the block
+   * takes its content's intrinsic width and pushes the whole column wide instead of scrolling.
+   */
+  overflow-x: auto;
+  min-width: 0;
+  white-space: pre;
+  /* Momentum scrolling on trackpads, and a visible bar on platforms that hide it by default. */
+  scrollbar-width: thin;
 }
 
 .rail {

@@ -9,7 +9,7 @@
 // Idempotent: re-running reports every unchanged file as skipped-duplicate and writes nothing.
 
 import { readFileSync } from 'node:fs';
-import { resolve, dirname, basename } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import {
@@ -76,7 +76,11 @@ await sources.upsert(scope, {
   id: sourceId,
   kind: 'markdown',
   name: sourceName,
-  description: `Markdown ingested from ${basename(target)}`,
+  // NOT the folder just scanned. One Markdown source can be fed from several folders over its
+  // life, and naming the most recent one made the row silently rewrite itself on every run — after a
+  // one-off ingest of a scratch directory the Import screen read "Markdown ingested from badfiles",
+  // describing the whole source by the last thing that touched it.
+  description: 'Markdown ingested from local folders',
   status: 'connected',
   lastSyncAt: new Date().toISOString(),
 });

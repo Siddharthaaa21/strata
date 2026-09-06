@@ -7,8 +7,17 @@ import { LibraryView } from './LibraryView';
  * A Server Component: the database is reached here, and only a scoped, flat projection crosses to
  * the client. Fixtures are retired (D8's fixture-driven pass is over) — this reads the real vault.
  */
-export async function LibraryScreen({ query }: { query?: string | undefined }) {
-  const { docs, sources, total, folders, query: q } = await loadLibrary(query);
+export async function LibraryScreen({
+  query,
+  page,
+  folder,
+}: {
+  query?: string | undefined;
+  page?: number | undefined;
+  folder?: string | undefined;
+}) {
+  const lib = await loadLibrary(query, page, folder);
+  const { docs, sources, total, folders, query: q } = lib;
   // `key` remounts the view when the query changes, which resets the folder pill. Without it the
   // pill selected while browsing survives into a search and silently narrows the results — so a
   // search that genuinely matched would render as "nothing found" because the one hit sat in a
@@ -21,6 +30,11 @@ export async function LibraryScreen({ query }: { query?: string | undefined }) {
       total={total}
       folders={folders}
       query={q}
+      folder={lib.folder}
+      page={lib.page}
+      pageCount={lib.pageCount}
+      firstOnPage={lib.firstOnPage}
+      lastOnPage={lib.lastOnPage}
     />
   );
 }

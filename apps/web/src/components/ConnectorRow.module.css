@@ -42,5 +42,79 @@
   flex: none;
   font-size: var(--text-small);
   font-weight: 600;
+  /* No pointer. This one is inert, and a hand cursor on it is the smallest possible lie. */
+}
+
+/* Holds the live control plus whatever the last import reported, so the row keeps its shape. */
+.actionWrap {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  /* Bounded so a multi-part report ("3 new, 2 updated, 1 failed.") wraps instead of squeezing the
+     description column, which is the flexible one and would collapse first. */
+  max-width: 40%;
+}
+
+/* Inherits the row's bare-text treatment -- the handoff has no button chrome here (Vault.dc.html:
+   122-131), and adding a filled button for these two would make them louder than every other row. */
+.actionButton {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 600;
   cursor: pointer;
+}
+
+.actionButton:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.actionResult,
+.actionError {
+  font-size: var(--text-small);
+  text-align: right;
+  line-height: 1.35;
+}
+
+.actionResult {
+  color: var(--ink-connector-desc);
+}
+
+/* Same colour the sign-in form uses for a failure. There is no error token: the handoff has no
+   error state anywhere, so inventing an OKLCH value here would be exactly the "from memory"
+   hardcoding CLAUDE.md forbids. Reusing the one established precedent keeps it consistent and keeps
+   the decision in one place if a real token is ever added. */
+.actionError {
+  color: var(--source-claude-fg);
+}
+
+/* GitHub takes an address rather than a file, so its row needs one input. Kept on the row's own
+   line rather than in a panel, so a screen with nothing connected still reads as quiet rows. */
+.repoRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-search-gap);
+}
+
+.repoInput {
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  color: var(--ink-base);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-tile);
+  padding: var(--space-search-padding);
+  /* Wide enough for a long owner/repo without stealing the description column, which is the
+     flexible one and would collapse first. */
+  width: 15ch;
+  min-width: 0;
+}
+
+.repoInput:disabled {
+  opacity: 0.6;
 }

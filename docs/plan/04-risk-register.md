@@ -146,8 +146,45 @@ Two further notes from round 3 worth keeping:
   adversarial input, `createAgent` atomicity, and the timing oracle (refuted as usable — the *known*
   id is slower, and by ~10%).
 
-**Still open — this is what now closes R2:** a fourth independent pass over the round-3 fixes. The
-same argument applies, and three rounds of evidence say it is not a formality.
+**Round four, 2026-08-16 — the MECHANICAL half only, and the distinction is the point.** Three
+independent verifier passes were launched and all three died on a provider session limit before
+reading a line. Rather than skip the round, the checks whose outcome does not depend on who runs
+them were run directly. A codepoint sweep and an added leaking tool return the same answer for any
+author; *thinking of an attack nobody listed* does not, and that half is still outstanding.
+
+| Check | Method | Result |
+| --- | --- | --- |
+| Does the fencing guard see a tool that did not exist when it was written? | Added `get_doc_raw` returning `title`/`folder`/`tags`/`body` unfenced, ran the suite, reverted | **Holds.** Failed naming the exact channel: `get_doc_raw: ingested content surfaced in "headline"`. Round 3's central claim is true |
+| Is the stripped set a property or a list? | Swept all 1,114,112 codepoints through `normalizeIngested` | **Holds.** `Default_Ignorable_Code_Point` and `Bidi_Control`: **zero survivors each** |
+| Do the two new adapters write anywhere? | Grepped every write primitive across `packages/ingest` and both CLI entrypoints | **Clean.** No `writeFile`, `mkdir`, `unlink`, or stream anywhere. Path handling cannot become traversal because nothing is opened for writing |
+
+**Two findings, neither fixed, deliberately.** A fix written by whoever found it is the authorship
+problem this entry documents three times over; these go to the independent pass as inputs, not as
+resolved items.
+
+- **F1 — 29 `Cf` format characters survive normalization, and they carry a payload.** `\p{Cf}` is
+  not a subset of `\p{Default_Ignorable_Code_Point}`, so the property as stated does not reach them:
+  `U+0600`–`U+0605`, `U+06DD`, `U+070F`, `U+0890`, `U+0891`, `U+08E2`, `U+110BD`, `U+110CD`, and the
+  Egyptian Hieroglyph format controls `U+13430`–`U+1343F`. A 28-character payload encoded across
+  them survived ingest intact, 28 of 28. **Weaker than rounds 2 and 3's carriers**, and the reason
+  matters: default-ignorable codepoints are *guaranteed* to render as nothing, whereas most of these
+  render as `.notdef` boxes in a Latin-font UI — visible clutter rather than a clean differential
+  between what a human sees and what a model reads. The candidate fix is one token wide (add
+  `\p{Cf}` to `PROPERTY_CLASSES`) and its cost is real: legitimate Arabic number signs would be
+  stripped from genuine Arabic content. That trade is the independent pass's call, not the author's.
+- **F2 — `toDisplayPath` performs no path normalization, so one file can hold several identities.**
+  Measured: `<cwd>/docs/../README.md` → `portfolio/docs/../README.md`, while `<cwd>/README.md` →
+  `portfolio/README.md`, and `<cwd>//README.md` → `portfolio//README.md`. Three display paths, one
+  file, and the display path is what the vault stores as the document's location. Also
+  `<cwd>/../../../etc/passwd.md` → `portfolio/../../../etc/passwd.md`, which reads in the Library as
+  a claim about provenance that is not true. Not a traversal — nothing writes — so this is identity
+  hygiene and display honesty rather than a breach.
+
+**Still open — this is what now closes R2:** the judgement half of a fourth independent pass over
+the round-3 fixes, plus adjudication of F1 and F2 above. The same argument applies, and three rounds
+of evidence say it is not a formality. The `packages/ingest/src/github.ts` and
+`claude-code.ts` adapters have had **no** independent review of any kind; they widen the ingest
+surface to repositories the operator may not own and to file paths a model chose.
 
 **Also open, deliberately not fixed in this pass** (recorded so they are not mistaken for oversights):
 ADR 0005 section 5's response logging is still unimplemented, so an injection that succeeds leaves no
