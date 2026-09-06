@@ -28,8 +28,8 @@ that is deliberately not built is not a pass; it is a finding that must point at
 | --- | --- | --- |
 | Sidebar folders list | Vault.dc.html:66-77 | [[screen-library]]'s folder pills already filter by folder; this duplicates an affordance |
 | Sidebar profile footer | Vault.dc.html:79-82 | Needs a `User` contract that does not exist; handoff copy is placeholder |
-| "Ask agent about this" CTA | README:31 | R8 in docs/plan/04-risk-register.md — a feature drawn as a button, not yet designed |
 | Pagination | — | The handoff has no design for it; [[screen-library]] states its limit instead of inventing controls |
 
 A waiver belongs in this table, not in a code comment and not in a closed milestone bullet. See
 [[dec-deferral-tracking]] for why that distinction is the whole point.
+

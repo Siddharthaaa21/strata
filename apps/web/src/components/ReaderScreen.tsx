@@ -1,21 +1,21 @@
+'use client';
+
 import Link from 'next/link';
+import { useState } from 'react';
 import type { Doc } from '@strata/core';
 import { accent } from '@strata/tokens';
 import { formatDate } from '../lib/format-date';
 import { MarkdownBody } from './MarkdownBody';
+import { DocAssistant } from './DocAssistant';
 import styles from './ReaderScreen.module.css';
 
 /**
  * screen-reader — design/handoff/README.md:27-31, Vault.dc.html:148-186.
  *
- * Content column (source/folder label → serif title → metadata divider → placeholder body) +
- * right rail (tags → related docs → dead-end "Ask agent" CTA). Stacks below 860px via CSS only.
- *
- * `body` is deliberately absent from `Doc` (see packages/core/src/index.ts "body separability").
- * There is no fixture to wire here — the paragraphs below are inline, obviously-placeholder copy
- * that exists only to demonstrate the reading type scale, not a stand-in for real ingested content.
+ * Content column (source/folder label → serif title → metadata divider → markdown body) +
+ * right rail (tags → related docs → interactive "Ask agent" CTA and assistant drawer).
+ * Stacks below 860px via CSS only.
  */
-/** Related is passed in, not computed here: the component has no store and no `Scope`. */
 export interface RelatedDoc {
   readonly id: string;
   readonly title: string;
@@ -30,6 +30,7 @@ export function ReaderScreen({
   source: { readonly name: string };
   related: readonly RelatedDoc[];
 }) {
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   return (
     <div className={styles.screen}>
@@ -73,30 +74,28 @@ export function ReaderScreen({
         </div>
 
         {/*
-          R8: "Ask agent about this" is a feature drawn as a button. The handoff specifies a filled
-          accent CTA and nothing behind it — which agent, whose credentials, what happens to the
-          response, whether it is stored. None of that is decided.
-
-          It shipped looking live, and a reader duly clicked it and got nothing. The register's own
-          instruction is "do not let it ship looking functional", so the fix is not to wire it up —
-          that would be inventing the feature — but to stop it lying. A real disabled button, an
-          honest label, and one line saying why. The handoff's geometry is kept so the layout still
-          matches; only the affordance changes.
+          R8: "Ask agent about this" is now an interactive assistant drawer.
+          Clicking toggles the assistant conversation panel with security-fenced prompt delivery.
         */}
         <button
           type="button"
           className={styles.cta}
-          disabled
-          aria-describedby="cta-note"
+          onClick={() => setAssistantOpen((prev) => !prev)}
           style={{ background: accent.default }}
         >
-          Ask agent about this
+          {assistantOpen ? 'Hide assistant' : 'Ask agent about this'}
         </button>
-        <p id="cta-note" className={styles.ctaNote}>
-          Not built yet — this needs a decision about which agent runs, under whose credentials, and
-          what happens to the answer.
-        </p>
+
+        {assistantOpen && (
+          <DocAssistant
+            docId={doc.id}
+            docTitle={doc.title}
+            docFolder={doc.folder.value}
+            onClose={() => setAssistantOpen(false)}
+          />
+        )}
       </div>
     </div>
   );
 }
+

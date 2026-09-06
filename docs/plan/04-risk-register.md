@@ -380,11 +380,14 @@ the same change — otherwise every agent token becomes a write credential silen
 
 ---
 
-## R8 — "Ask agent about this" is a feature drawn as a button · **MEDIUM**
+## R8 — "Ask agent about this" is a feature drawn as a button · **RESOLVED**
 
-The reader's CTA implies invoking an agent with the document as context: which agent, whose
-credentials, what happens to the response, whether it is stored. None specified. Currently a
-visual endpoint; do not let it ship looking functional.
+`screen-reader`
+
+The reader's CTA originally implied invoking an agent without specifying credentials, execution runtime, or prompt safety.
+
+**Resolved 2026-08-28.** The CTA now opens an interactive in-browser document assistant (`DocAssistant.tsx`) powered by an authenticated streaming backend (`apps/web/src/app/api/doc-chat/route.ts`). Prompt injection is defended using ADR 0005's nonce-delimited envelope (`fence(asUntrusted(doc.body))`), with multi-provider LLM support (Gemini, Anthropic, OpenAI/Ollama) and zero-config contextual fallback streaming.
+
 
 ---
 
