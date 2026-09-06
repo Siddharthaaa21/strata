@@ -57,5 +57,7 @@ coverage/
 
 # Untracked scratch files
 .probe/
+.data/
 *.dmg
+
 
