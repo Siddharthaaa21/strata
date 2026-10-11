@@ -12,7 +12,7 @@ import 'server-only';
 
 import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import pg from 'pg';
@@ -132,12 +132,17 @@ async function getLocalDriver(): Promise<SqlDriver> {
     // causing `fs.readFileSync(new URL(...))` inside pglite's emscripten loader to throw:
     // "TypeError: The 'path' argument must be of type string or an instance of Buffer or URL. Received an instance of URL".
     // We normalize any object with `.href` to a clean file path string before passing to Node fs methods.
-    const candidatePaths = [
-      resolve(process.cwd(), 'node_modules/@electric-sql/pglite/dist'),
-      resolve(process.cwd(), '../../node_modules/@electric-sql/pglite/dist'),
-      '/Users/siddhartha/Downloads/design_handoff_strata_workspace/node_modules/@electric-sql/pglite/dist',
-    ];
-    const pgliteDist = candidatePaths.find((dir) => fs.existsSync(dir)) || candidatePaths[0]!;
+    let pgliteDist = '';
+    try {
+      const req = createRequire(process.cwd() + '/package.json');
+      pgliteDist = dirname(req.resolve('@electric-sql/pglite'));
+    } catch {
+      const candidatePaths = [
+        resolve(process.cwd(), 'node_modules/@electric-sql/pglite/dist'),
+        resolve(process.cwd(), '../../node_modules/@electric-sql/pglite/dist'),
+      ];
+      pgliteDist = candidatePaths.find((dir) => fs.existsSync(dir)) || candidatePaths[0]!;
+    }
 
     const patchedFss = new WeakSet<object>();
     const patchFs = (targetFs: Record<string, unknown> | null | undefined) => {

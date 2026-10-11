@@ -43,11 +43,14 @@ function describe(url) {
 loadEnvFile();
 
 const url = process.env['DATABASE_URL'];
-if (!url) {
+const isLocal = process.env['STRATA_LOCAL_DB'] === '1' || url === 'local';
+
+if (!url && !isLocal) {
   console.error(
     'DATABASE_URL is not set.\n\n' +
       'Create a .env at the repo root containing:\n' +
       '  DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require\n\n' +
+      'Or run with STRATA_LOCAL_DB=1 to use in-process PGlite.\n\n' +
       '.env is gitignored. There is deliberately no default — a silent localhost fallback is how a\n' +
       'process ends up writing to the wrong database.',
   );
@@ -55,8 +58,28 @@ if (!url) {
 }
 
 const checkOnly = process.argv.includes('--check');
-const pool = new pg.Pool({ connectionString: url, max: 2 });
-const db = fromPoolLike(pool);
+
+let pool;
+let db;
+
+if (isLocal) {
+  const { PGlite } = await import('@electric-sql/pglite');
+  const pglite = new PGlite(resolve(ROOT, 'apps/web/.data/strata.db'));
+  db = {
+    async query(sql, params) {
+      const res = await pglite.query(sql, params);
+      return { rows: res.rows };
+    },
+    async exec(sql) {
+      return pglite.exec(sql);
+    },
+  };
+  console.log('Connecting to local PGlite (apps/web/.data/strata.db)');
+} else {
+  pool = new pg.Pool({ connectionString: url, max: 2 });
+  db = fromPoolLike(pool);
+  console.log(`Connecting to ${describe(url)}`);
+}
 
 let failures = 0;
 const check = async (label, fn) => {
@@ -68,8 +91,6 @@ const check = async (label, fn) => {
     console.error(`  FAIL  ${label}: ${e.message}`);
   }
 };
-
-console.log(`Connecting to ${describe(url)}`);
 
 await check('server reachable', async () => {
   const { rows } = await db.query('SELECT version() AS v');
@@ -150,7 +171,7 @@ await check('round trip through the real store', async () => {
   return 'upsert idempotent, search ranked, probe rows removed';
 });
 
-await pool.end();
+if (pool) await pool.end();
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

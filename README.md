@@ -14,7 +14,7 @@ Humans browse and query the web app. Agents retrieve context over MCP.
 - **Storage**: Native PostgreSQL with full-text search (`tsvector`), ranking weighted specifically for AI context windows, and atomic CTE upserts.
 - **Ingestion**: Multi-source pipeline for local Markdown (with rename tracking and tombstone pruning), Claude exports, Claude Code transcripts, and GitHub repositories.
 - **Authentication**: Human sessions via Supabase Auth (PKCE, ES256 JWKS) and machine tokens via `stra_at_<tokenId>_<secret>`.
-- **Verification Gate**: 370 automated tests passing against in-process PostgreSQL (PGlite).
+- **Verification Gate**: 376 automated tests passing against in-process PostgreSQL (PGlite).
 
 ---
 
@@ -79,10 +79,13 @@ Applies schema migrations, verifies full-text search indexes (`ts_rank_cd`), and
 
 ### 4. Run the web application
 ```bash
-# Standard mode (requires Supabase Auth login):
+# Zero-config local offline mode (embedded PGlite database + instant local login, no Supabase required):
+npm run dev:local
+
+# Standard mode (connects to live PostgreSQL & Supabase Auth):
 npm run dev
 
-# Local dev auto sign-in mode:
+# Custom dev credentials mode:
 npm run dev:inside
 ```
 The app runs at `http://localhost:3000` (or `:3001` in `dev:inside`).
