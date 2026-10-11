@@ -2,6 +2,7 @@
   "name": "@strata/web",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -16,6 +17,7 @@
     "@strata/tokens": "*",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
+    "@electric-sql/pglite": "^0.5.4",
     "next": "^16.2.12",
     "pg": "^8.16.3",
     "react": "^19.0.0",

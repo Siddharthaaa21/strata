@@ -101,8 +101,24 @@ try {
 const { pending, failures, branch, found, incomplete } = scanned;
 console.log(`  branch ${branch}: ${found} markdown file(s) found, ${pending.length} readable`);
 
-const pool = new pg.Pool({ connectionString: requireConnectionString(process.env), max: 4 });
-const db = fromPoolLike(pool);
+let db;
+let pool;
+if (process.env['STRATA_LOCAL_DB'] === '1' || process.env['DATABASE_URL'] === 'local') {
+  const { PGlite } = await import('@electric-sql/pglite');
+  const pglite = new PGlite('apps/web/.data/strata.db');
+  db = {
+    async query(sql, params) {
+      const res = await pglite.query(sql, params);
+      return { rows: res.rows };
+    },
+    async exec(sql) {
+      return pglite.exec(sql);
+    },
+  };
+} else {
+  pool = new pg.Pool({ connectionString: requireConnectionString(process.env), max: 4 });
+  db = fromPoolLike(pool);
+}
 await migrate(db);
 
 const scope = await cliScope(db);
@@ -136,13 +152,23 @@ if (askedToPrune && incomplete) {
 const known = await docs.listKnown(scope, sourceId);
 const now = new Date().toISOString();
 
+const repoFolder = arg('--folder', `${ref.owner}/${ref.repo}`);
+const pendingWithFolder = pending.map((p) => ({
+  ...p,
+  folder: {
+    ...p.folder,
+    value: repoFolder,
+    provenance: 'source',
+  },
+}));
+
 const result = await persistIngest(
   scope,
   docs,
   await runIngest({
     scope,
     sourceId,
-    pending,
+    pending: pendingWithFolder,
     failures,
     lookup: storeLookup(scope, docs),
     reprocess: process.argv.includes('--reindex'),
@@ -187,4 +213,4 @@ if (result.deletions.length > 0) {
   if (result.deletions.length > 20) console.log(`  ... and ${result.deletions.length - 20} more`);
 }
 
-await pool.end();
+if (pool) await pool.end();

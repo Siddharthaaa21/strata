@@ -11,6 +11,7 @@ import 'server-only';
  */
 
 import { readFileSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import { resolve } from 'node:path';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
@@ -24,6 +25,7 @@ import {
   createEventStore,
   createSourceStore,
   fromPoolLike,
+  migrate,
   // The page size IS the store's ceiling, imported rather than restated. Two numbers that must agree
   // are two numbers that can disagree, and the failure would be a page that silently drops rows.
   MAX_RESULTS,
@@ -31,8 +33,10 @@ import {
   type DocStore,
   type EventStore,
   type SourceStore,
+  type SqlDriver,
 } from '@strata/storage';
 import { claimsFromCookies, LOCAL_ISSUER } from './session.ts';
+import { localIssuerAllowed } from './local-issuer.ts';
 import { PATH_HEADER } from '../proxy.ts';
 import { redirectTarget } from './safe-path.ts';
 
@@ -61,7 +65,11 @@ function loadRootEnv() {
  * every hot reload — without this each edit would leak a pool and eventually exhaust Supabase's
  * connection limit.
  */
-const globalForPool = globalThis as unknown as { strataPool?: pg.Pool };
+const globalForPool = globalThis as unknown as {
+  strataPool?: pg.Pool;
+  strataLocalDriver?: SqlDriver;
+  strataLocalDriverPromise?: Promise<SqlDriver>;
+};
 
 /**
  * Pool size is a function of where this runs, and the serverless answer is small.
@@ -97,6 +105,171 @@ function pool(): pg.Pool {
     connectionTimeoutMillis: 10_000,
   });
   return globalForPool.strataPool;
+}
+
+async function getDriver(): Promise<SqlDriver> {
+  loadRootEnv();
+  if (process.env['STRATA_LOCAL_DB'] === '1' || process.env['DATABASE_URL'] === 'local') {
+    return getLocalDriver();
+  }
+  return fromPoolLike(pool());
+}
+
+async function getLocalDriver(): Promise<SqlDriver> {
+  if (globalForPool.strataLocalDriver) {
+    return globalForPool.strataLocalDriver;
+  }
+  if (globalForPool.strataLocalDriverPromise) {
+    return globalForPool.strataLocalDriverPromise;
+  }
+
+  globalForPool.strataLocalDriverPromise = (async () => {
+    const fs = await import('node:fs');
+    const { URL: NodeURL, fileURLToPath } = await import('node:url');
+    const { createRequire } = await import('node:module');
+
+    // Turbopack's bundled WHATWG URL polyfill is not recognized as `URL` by Node's internal `validatePath`,
+    // causing `fs.readFileSync(new URL(...))` inside pglite's emscripten loader to throw:
+    // "TypeError: The 'path' argument must be of type string or an instance of Buffer or URL. Received an instance of URL".
+    // We normalize any object with `.href` to a clean file path string before passing to Node fs methods.
+    const candidatePaths = [
+      resolve(process.cwd(), 'node_modules/@electric-sql/pglite/dist'),
+      resolve(process.cwd(), '../../node_modules/@electric-sql/pglite/dist'),
+      '/Users/siddhartha/Downloads/design_handoff_strata_workspace/node_modules/@electric-sql/pglite/dist',
+    ];
+    const pgliteDist = candidatePaths.find((dir) => fs.existsSync(dir)) || candidatePaths[0]!;
+
+    const patchedFss = new WeakSet<object>();
+    const patchFs = (targetFs: Record<string, unknown> | null | undefined) => {
+      if (!targetFs || typeof targetFs !== 'object' || patchedFss.has(targetFs)) return;
+      patchedFss.add(targetFs);
+      const normalize = (p: unknown) => {
+        let path = p;
+        if (path && typeof path === 'object' && 'href' in path && typeof (path as { href: unknown }).href === 'string') {
+          const hrefStr = (path as { href: string }).href;
+          try {
+            path = fileURLToPath(hrefStr);
+          } catch {
+            path = String(hrefStr);
+          }
+        }
+        if (typeof path === 'string' && path.includes('/_next/static/media/')) {
+          const base = path.split('/').pop() || '';
+          if (base.includes('pglite') && base.endsWith('.data')) return resolve(pgliteDist, 'pglite.data');
+          if (base.includes('pglite') && base.endsWith('.wasm')) return resolve(pgliteDist, 'pglite.wasm');
+          if (base.includes('initdb') && base.endsWith('.wasm')) return resolve(pgliteDist, 'initdb.wasm');
+        }
+        return path;
+      };
+      for (const fn of [
+        'readFileSync',
+        'readFile',
+        'openSync',
+        'open',
+        'statSync',
+        'stat',
+        'lstatSync',
+        'lstat',
+        'mkdirSync',
+        'mkdir',
+        'readdirSync',
+        'readdir',
+        'accessSync',
+        'access',
+        'existsSync',
+        'realpathSync',
+        'realpath',
+        'writeFileSync',
+        'writeFile',
+        'unlinkSync',
+        'unlink',
+        'rmdirSync',
+        'rmdir',
+      ]) {
+        const candidate = (targetFs as Record<string, unknown>)[fn];
+        if (typeof candidate === 'function') {
+          const orig = candidate;
+          (targetFs as Record<string, unknown>)[fn] = function (path: unknown, ...args: unknown[]) {
+            return orig.call(targetFs, normalize(path), ...args);
+          };
+        }
+      }
+    };
+
+    (globalThis as { URL?: unknown }).URL = NodeURL;
+
+    try {
+      const req = createRequire(process.cwd() + '/package.json');
+      patchFs(req('node:fs'));
+      patchFs(req('fs'));
+      patchFs(req('node:fs/promises'));
+      patchFs(req('fs/promises'));
+      patchFs(req('node:fs').promises);
+      patchFs(req('fs').promises);
+    } catch (err) {
+      console.error('[vault] failed to patch fs:', err);
+    }
+
+    const dataParent = resolve(process.cwd(), '.data');
+    fs.mkdirSync(dataParent, { recursive: true });
+    const dbDir = resolve(dataParent, 'strata.db');
+
+    const initPglite = async (targetDir: string) => {
+      // Remove any stale lock file from an ungraceful shutdown
+      const pidPath = resolve(targetDir, 'postmaster.pid');
+      if (fs.existsSync(pidPath)) {
+        try {
+          fs.unlinkSync(pidPath);
+        } catch {
+          /* ignore */
+        }
+      }
+      const { PGlite } = await import('@electric-sql/pglite');
+      const inst = new PGlite(targetDir);
+      await inst.query('SELECT 1');
+      return inst;
+    };
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let pglite: any;
+      try {
+        pglite = await initPglite(dbDir);
+      } catch (openErr: unknown) {
+        console.warn('[getLocalDriver] detected corrupted or aborted local DB, recovering...', openErr);
+        try {
+          const backupDir = resolve(dataParent, `strata.db.corrupt-${Date.now()}`);
+          if (fs.existsSync(dbDir)) {
+            fs.renameSync(dbDir, backupDir);
+          }
+        } catch (backupErr) {
+          console.error('[getLocalDriver] failed to backup corrupt DB, removing:', backupErr);
+          fs.rmSync(dbDir, { recursive: true, force: true });
+        }
+        pglite = await initPglite(dbDir);
+      }
+
+      const driver: SqlDriver = {
+        async query<T = Record<string, unknown>>(sql: string, params?: unknown[]) {
+          const res = await pglite.query(sql, params);
+          return { rows: res.rows as T[] };
+        },
+        async exec(sql: string) {
+          return pglite.exec(sql);
+        },
+      };
+      await migrate(driver);
+      globalForPool.strataLocalDriver = driver;
+      return driver;
+    } catch (err: unknown) {
+      delete globalForPool.strataLocalDriverPromise;
+      const msg = err instanceof Error ? err.stack : String(err);
+      console.error('[getLocalDriver] error stack:', msg);
+      throw err;
+    }
+  })();
+
+  return globalForPool.strataLocalDriverPromise;
 }
 
 export interface Vault {
@@ -176,11 +349,33 @@ export async function vault(): Promise<Vault> {
   // No settings argument: `claimsFromCookies` picks the local issuer when it is explicitly enabled
   // on a non-deployed machine, and the real provider otherwise. Everything after this line is
   // identical either way.
-  const claims = await claimsFromCookies(asMap);
+  let claims = await claimsFromCookies(asMap);
+  if (
+    claims === undefined &&
+    process.env['STRATA_DEV_AUTH'] === '1' &&
+    process.env['STRATA_DEV_EMAIL'] &&
+    localIssuerAllowed()
+  ) {
+    const email = process.env['STRATA_DEV_EMAIL'].trim().toLowerCase();
+    claims = {
+      provider: LOCAL_ISSUER,
+      subject: `local|${createHmac('sha256', 'strata-local-subject').update(email).digest('hex').slice(0, 32)}`,
+      email,
+    };
+  }
   if (claims === undefined) throw new NotSignedIn('no valid session cookie');
 
-  const db = fromPoolLike(pool());
-  const auth = createAuthenticator(createAuthStore(db));
+  const db = await getDriver();
+  const authStore = createAuthStore(db);
+  const auth = createAuthenticator(authStore);
+
+  if (process.env['STRATA_LOCAL_DB'] === '1' && claims.email) {
+    try {
+      await authStore.addMember({ workspaceId, email: claims.email });
+    } catch {
+      // member already exists
+    }
+  }
 
   let scope: Scope;
   try {
@@ -417,8 +612,8 @@ export async function loadAgentAccess(): Promise<{
   const { scope, sources: sourceStore } = await requireVault();
   loadRootEnv();
   const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId;
-
-  const store = createAuthStore(fromPoolLike(pool()));
+  const db = await getDriver();
+  const store = createAuthStore(db);
   const [agents, srcs] = await Promise.all([store.listAgents(workspaceId), sourceStore.list(scope)]);
   const nameOf = new Map(srcs.map((s) => [s.id, s.name]));
 
@@ -505,7 +700,7 @@ export async function loadActivity(limit = 50): Promise<{
   loadRootEnv();
   const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId;
 
-  const db = fromPoolLike(pool());
+  const db = await getDriver();
   const log = createAccessLog(db);
   const auth = createAuthStore(db);
 
@@ -554,7 +749,8 @@ export async function revokeAgentAction(principalId: string): Promise<{ tokensRe
   loadRootEnv();
   const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId;
 
-  const store = createAuthStore(fromPoolLike(pool()));
+  const db = await getDriver();
+  const store = createAuthStore(db);
   const report = await store.revokeAgent(workspaceId, principalId as PrincipalId, new Date().toISOString());
   return { tokensRevoked: report.tokensRevoked };
 }
@@ -595,7 +791,8 @@ export async function rescopeAgentAction(
     requested = sourceIds as readonly SourceId[];
   }
 
-  const store = createAuthStore(fromPoolLike(pool()));
+  const db = await getDriver();
+  const store = createAuthStore(db);
   return store.rescopeAgent(
     workspaceId,
     principalId as PrincipalId,
@@ -604,30 +801,97 @@ export async function rescopeAgentAction(
   );
 }
 
-export interface RecentImport {
-  readonly id: string;
-  readonly title: string;
-  readonly occurredAt: string;
+/**
+ * Disconnects a source and soft-deletes its documents from the current workspace.
+ */
+export async function disconnectSourceAction(sourceId: string): Promise<void> {
+  await requireVault();
+  loadRootEnv();
+  const workspaceId = process.env['STRATA_WORKSPACE_ID'] as WorkspaceId;
+  const db = await getDriver();
+  const now = new Date().toISOString();
+
+  // 1. Soft-delete all documents belonging to this source in this workspace
+  await db.query(
+    `UPDATE docs SET deleted_at = $3 WHERE workspace_id = $1 AND source_id = $2 AND deleted_at IS NULL`,
+    [workspaceId, sourceId, now],
+  );
+
+  // 2. Remove dynamic sources from sources table; set placeholder sources to 'disconnected'
+  if (sourceId.startsWith('src-github-')) {
+    await db.query(
+      `DELETE FROM sources WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, sourceId],
+    );
+  } else {
+    await db.query(
+      `UPDATE sources SET status = 'disconnected' WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, sourceId],
+    );
+  }
 }
 
+import {
+  groupRecentImports,
+  type RecentImportItem,
+  type RecentImportFolderGroup,
+  type RecentImport,
+} from './recent-import-grouping.ts';
+
+export {
+  groupRecentImports,
+  type RecentImportItem,
+  type RecentImportFolderGroup,
+  type RecentImport,
+};
+
 /**
- * Loads the Import screen's data.
- *
- * Failed events are excluded from this list, not from storage. The list has no status indicator by
- * design (README:24), so a failed row would read as a success. Where failures DO surface to the
- * user is still unresolved — carried out of M3 and recorded in the milestone plan.
+ * Loads the Import screen's data with folder grouping.
  */
 export async function loadImport(): Promise<{
   sources: SourceListItem[];
   recent: RecentImport[];
+  recentGroups: RecentImportFolderGroup[];
   failures: ImportFailure[];
 }> {
   const { sources, events, docs, scope } = await requireVault();
-  // 40 rather than 20: failures and successes now come out of one list and are split below, so a
-  // single bad import could otherwise push every success off the end of the page.
-  const [srcs, evts] = await Promise.all([sources.list(scope), events.recent(scope, 40)]);
+  const [srcs, evts] = await Promise.all([sources.list(scope), events.recent(scope, 60)]);
 
-  const titles = new Map((await docs.list(scope, { limit: MAX_RESULTS })).map((d) => [d.id, d.title]));
+  const docsList = await docs.list(scope, { limit: MAX_RESULTS });
+  const docsById = new Map(docsList.map((d) => [d.id, d]));
+  const sourcesById = new Map(srcs.map((s) => [s.id, s]));
+  const liveSourceIds = new Set(srcs.map((s) => s.id));
+
+  // Only show recent events for sources that are still active in the workspace
+  const recent: RecentImport[] = evts
+    .filter((e) => e.status !== 'failed' && liveSourceIds.has(e.sourceId as SourceId))
+    .map((e) => {
+      const doc = e.docId !== undefined ? docsById.get(e.docId) : undefined;
+      const src = sourcesById.get(e.sourceId as SourceId);
+      const title = doc?.title ?? e.externalId ?? 'Untitled';
+      const folder = doc?.folder ?? src?.name ?? 'Other';
+      const docId = doc?.id ?? e.docId;
+      return {
+        id: e.id,
+        title,
+        folder,
+        ...(docId ? { docId } : {}),
+        ...(e.externalId ? { externalId: e.externalId } : {}),
+        occurredAt: e.occurredAt,
+      };
+    });
+
+  const recentGroups = groupRecentImports(recent);
+
+  const failures: ImportFailure[] = evts
+    .filter((e) => e.status === 'failed' && liveSourceIds.has(e.sourceId as SourceId))
+    .map((e) => ({
+      id: e.id,
+      externalId: e.externalId ?? 'unknown file',
+      code: e.error?.code ?? 'unknown',
+      message: e.error?.message ?? '',
+      occurredAt: e.occurredAt,
+    }));
 
   return {
     sources: srcs.map((s) => ({
@@ -637,46 +901,9 @@ export async function loadImport(): Promise<{
       description: s.description,
       status: s.status,
     })),
-
-    recent: evts
-      .filter((e) => e.status !== 'failed')
-      .map((e) => ({
-        id: e.id,
-        // FALLS BACK to the file path instead of dropping the row.
-        //
-        // The title map is the newest `MAX_RESULTS` documents, so an event about anything older
-        // matched nothing and the row silently vanished — Recent imports quietly stopped being a
-        // record of what happened and became a record of what is currently near the top. The
-        // `externalId` is always present for a per-file event and identifies the same thing.
-        title: (e.docId !== undefined ? titles.get(e.docId) : undefined) ?? e.externalId ?? 'Untitled',
-        occurredAt: e.occurredAt,
-      })),
-
-    /**
-     * Failures, which this screen has never shown.
-     *
-     * Carried out of M3 and open ever since: failed events were filtered out because the Recent
-     * Imports list has no status indicator by design (README:24), so a failed row would read as a
-     * success. That was a correct reason not to put them in THAT list, and it was mistaken for a
-     * reason not to show them at all — so a file that failed to import was simply absent, with
-     * nothing anywhere to say why. ADR 0003 records failures precisely so a user can find out why a
-     * document did not appear; until now nothing served that purpose.
-     *
-     * It matters more since the upload buttons shipped (D24): a person can now cause a failure from
-     * the browser, and the browser was the one place that could not tell them.
-     */
-    failures: evts
-      .filter((e) => e.status === 'failed')
-      .map((e) => ({
-        id: e.id,
-        // The path, not a doc title — `docId` is absent precisely in the failure case.
-        externalId: e.externalId ?? 'unknown file',
-        // The sanitized message by contract (ADR 0003): a fixed per-code template, never a caught
-        // exception's text and never document content.
-        code: e.error?.code ?? 'unknown',
-        message: e.error?.message ?? '',
-        occurredAt: e.occurredAt,
-      })),
+    recent,
+    recentGroups,
+    failures,
   };
 }
 

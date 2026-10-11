@@ -21,10 +21,51 @@
   margin-top: var(--space-subtitle-gap);
 }
 
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-filter-row-gap);
+  flex-wrap: wrap;
+}
+
 .filterRow {
   display: flex;
   gap: var(--space-filter-row-gap);
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.viewModeToggle {
+  display: inline-flex;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--surface-raised);
+  padding: 2px;
+  gap: 2px;
+}
+
+.viewModeBtn {
+  padding: 4px 10px;
+  font-size: var(--text-small);
+  font-weight: 500;
+  font-family: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--ink-muted);
+  border-radius: var(--radius-pill);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.viewModeBtn:hover {
+  color: var(--ink-base);
+}
+
+.viewModeBtnActive {
+  background: var(--ink-body);
+  color: var(--ink-inverse);
 }
 
 .pill {
@@ -44,10 +85,195 @@
   color: var(--ink-inverse);
 }
 
+.folderSections {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.folderSection {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.folderHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.folderHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.folderIcon {
+  font-size: 16px;
+  flex: none;
+}
+
+.folderTitle {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--ink-base);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folderCountBadge {
+  font-size: var(--text-small);
+  color: var(--ink-muted);
+  background: var(--surface-chip);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-tile);
+  padding: 1px 7px;
+  flex: none;
+}
+
+.folderHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+.folderFilterLink {
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.folderFilterLink:hover {
+  text-decoration: underline;
+}
+
+.folderToggleBtn {
+  font-size: var(--text-small);
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--ink-muted);
+  background: none;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-tile);
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.folderToggleBtn:hover {
+  background: var(--surface-sunken);
+  color: var(--ink-base);
+}
+
 .grid {
   display: grid;
   grid-template-columns: var(--library-grid);
   gap: var(--library-gap);
+}
+
+.listContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-tile);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.listRow:hover {
+  background: var(--surface-sunken);
+  border-color: var(--border-structural);
+  transform: translateY(-1px);
+}
+
+.listLeft {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.listIcon {
+  font-size: 13px;
+  opacity: 0.7;
+  flex: none;
+}
+
+.listText {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.listTitle {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--ink-title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
+  max-width: 320px;
+}
+
+.listExcerpt {
+  font-size: var(--text-small);
+  color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.listRight {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+}
+
+.listFolderBadge {
+  font-size: var(--text-small);
+  color: var(--ink-connector-desc);
+  font-family: var(--font-mono);
+  background: var(--surface-chip);
+  border-radius: var(--radius-tile);
+  padding: 1px 6px;
+}
+
+.listTime {
+  font-size: var(--text-small);
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.listArrow {
+  font-size: var(--text-small);
+  color: var(--ink-muted);
+  opacity: 0.6;
 }
 
 /* The "showing N of M" note. Quieter than the count it qualifies — it is a caveat, not a headline. */

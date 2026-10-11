@@ -94,7 +94,10 @@ let jwksCache: CachedKeys | undefined;
  * uses, and guessing wrong rejects every token.
  */
 async function fetchJwks(issuer: string): Promise<Record<string, import('node:crypto').JsonWebKey>> {
-  const res = await fetch(`${issuer}/.well-known/jwks.json`, { cache: 'no-store' });
+  const res = await fetch(`${issuer}/.well-known/jwks.json`, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(2000),
+  });
   if (!res.ok) throw new SessionError(`jwks fetch failed: ${res.status}`);
 
   const body: unknown = await res.json();

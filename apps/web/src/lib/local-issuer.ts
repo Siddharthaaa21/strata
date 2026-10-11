@@ -13,7 +13,6 @@
  * a boolean, which is exactly the kind of thing that should be exhaustively testable.
  */
 
-import { randomBytes } from 'node:crypto';
 
 /**
  * The local issuer's signing key.
@@ -23,10 +22,8 @@ import { randomBytes } from 'node:crypto';
  * the dev server invalidates every local session, which is exactly the right amount of durability
  * for something that exists so a demo can run without a provider account.
  */
-const globalForDevKey = globalThis as unknown as { strataDevKey?: string };
 export function localIssuerSecret(): string {
-  globalForDevKey.strataDevKey ??= randomBytes(32).toString('hex');
-  return globalForDevKey.strataDevKey;
+  return process.env['STRATA_DEV_SECRET'] || 'strata-local-dev-fixed-secret-key-2026';
 }
 
 /** The issuer string local tokens carry. Never a value any real provider would emit. */

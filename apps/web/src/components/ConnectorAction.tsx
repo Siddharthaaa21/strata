@@ -76,8 +76,15 @@ export function ConnectorAction({ kind, color }: { kind: ConnectorActionKind; co
             setFailed(false);
             try {
               const { uploadClaudeExport, uploadMarkdown } = await import('../app/import/actions');
-              const report = kind === 'claude' ? await uploadClaudeExport(form) : await uploadMarkdown(form);
+              const res = kind === 'claude' ? await uploadClaudeExport(form) : await uploadMarkdown(form);
 
+              if (!res.ok) {
+                setFailed(true);
+                setMessage(res.error);
+                return;
+              }
+
+              const report = res.report;
               const parts = [
                 report.created > 0 ? `${report.created} new` : '',
                 report.updated > 0 ? `${report.updated} updated` : '',

@@ -1,6 +1,7 @@
 import { sourceTint, statusColor, accent, type SourceKind } from '@strata/tokens';
 import { ConnectorAction, type ConnectorActionKind } from './ConnectorAction.tsx';
 import { GitHubConnect } from './GitHubConnect.tsx';
+import { DisconnectButton } from './DisconnectButton.tsx';
 import styles from './ConnectorRow.module.css';
 
 /**
@@ -45,6 +46,7 @@ const INITIALS: Record<SourceKind, string> = {
  */
 /** The flat projection, not a domain `Source` — no `workspaceId` or `credentialRef` reaches a component. */
 export interface ConnectorInfo {
+  readonly id: string;
   readonly kind: string;
   readonly name: string;
   readonly description: string;
@@ -110,13 +112,17 @@ export function ConnectorRow({
       {interactive && kind === 'github' ? (
         <GitHubConnect color={accent.default} />
       ) : interactive && live ? (
-        <ConnectorAction kind={kind as ConnectorActionKind} color={color} />
+        <div className={styles.statusAndAction}>
+          <ConnectorAction kind={kind as ConnectorActionKind} color={color} />
+          {connected && <DisconnectButton sourceId={source.id} sourceName={source.name} />}
+        </div>
       ) : (
-        // Still not a `<button>`. An inert control that reports itself as one to a screen reader is
-        // worse than a label, because it invites the click it cannot honour.
-        <span className={styles.action} style={{ color }} aria-disabled="true">
-          {label}
-        </span>
+        <div className={styles.statusAndAction}>
+          <span className={styles.action} style={{ color }} aria-disabled="true">
+            {label}
+          </span>
+          {connected && <DisconnectButton sourceId={source.id} sourceName={source.name} />}
+        </div>
       )}
     </div>
   );

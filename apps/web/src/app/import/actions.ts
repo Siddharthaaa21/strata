@@ -10,6 +10,7 @@
  * through the same normalization and fencing as anything the CLI ingests.
  */
 
+import { revalidatePath } from 'next/cache';
 import {
   importClaudeExport,
   importGitHubRepo,
@@ -17,6 +18,7 @@ import {
   MAX_UPLOAD_BYTES,
   type ImportReport,
 } from '../../lib/import-upload.ts';
+import { disconnectSourceAction } from '../../lib/vault.ts';
 
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown'];
 
@@ -31,44 +33,48 @@ function assertWithinBudget(files: readonly File[]): void {
   }
 }
 
-export async function uploadClaudeExport(form: FormData): Promise<ImportReport> {
-  const file = form.get('file');
-  if (!(file instanceof File)) throw new Error('No file was selected.');
-  assertWithinBudget([file]);
+export type ActionResult<T = ImportReport> =
+  | { ok: true; report: T }
+  | { ok: false; error: string };
 
-  // `scanClaudeExport` throws on a file that is not a conversations array — deliberately, because
-  // the export ZIP holds four JSON files and pointing at the wrong one is the likeliest mistake.
-  // That message is safe to surface: it names the expectation, never the content.
-  return importClaudeExport(await file.text());
+export async function uploadClaudeExport(form: FormData): Promise<ActionResult<ImportReport>> {
+  const file = form.get('file');
+  if (!(file instanceof File)) return { ok: false, error: 'No file was selected.' };
+  try {
+    assertWithinBudget([file]);
+    const report = await importClaudeExport(await file.text());
+    return { ok: true, report };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'The Claude export could not be read as a list of conversations.';
+    return { ok: false, error: msg };
+  }
 }
 
-export async function uploadMarkdown(form: FormData): Promise<ImportReport> {
+export async function uploadMarkdown(form: FormData): Promise<ActionResult<ImportReport>> {
   const files = form.getAll('files').filter((f): f is File => f instanceof File);
-  if (files.length === 0) throw new Error('No files were selected.');
-  assertWithinBudget(files);
-
-  // Filtered here rather than left to the adapter, which would record each one as an
-  // `unsupported-type` failure. A user who drags a folder containing images and lockfiles has not
-  // made two hundred mistakes; those files are simply not what this imports, and reporting them as
-  // failures would bury the one real failure that mattered.
-  const markdown = files.filter((f) =>
-    MARKDOWN_EXTENSIONS.some((ext) => (f.name ?? '').toLowerCase().endsWith(ext)),
-  );
-  if (markdown.length === 0) {
-    throw new Error('None of those files are Markdown (.md or .markdown).');
+  if (files.length === 0) return { ok: false, error: 'No files were selected.' };
+  try {
+    assertWithinBudget(files);
+    const markdown = files.filter((f) =>
+      MARKDOWN_EXTENSIONS.some((ext) => (f.name ?? '').toLowerCase().endsWith(ext)),
+    );
+    if (markdown.length === 0) {
+      return { ok: false, error: 'None of those files are Markdown (.md or .markdown).' };
+    }
+    const report = await importMarkdownFiles(
+      await Promise.all(
+        markdown.map(async (f) => ({
+          path: relativePath(f),
+          text: await f.text(),
+          modifiedAt: new Date(f.lastModified).toISOString(),
+        })),
+      ),
+    );
+    return { ok: true, report };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Failed to import Markdown files.';
+    return { ok: false, error: msg };
   }
-
-  return importMarkdownFiles(
-    await Promise.all(
-      markdown.map(async (f) => ({
-        // `webkitRelativePath` when a folder was chosen, so a nested layout keeps its folders and
-        // the derived `folder` field means something. Falls back to the bare name for loose files.
-        path: relativePath(f),
-        text: await f.text(),
-        modifiedAt: new Date(f.lastModified).toISOString(),
-      })),
-    ),
-  );
 }
 
 /**
@@ -98,26 +104,48 @@ function relativePath(file: File): string {
  * validates it before it reaches a request path; the errors it throws carry a CODE, never GitHub's
  * own message, which can quote request URLs and — on a private repository — path names.
  */
-export async function importGitHub(repo: string): Promise<ImportReport & { incomplete: boolean }> {
+export async function importGitHub(
+  repo: string,
+): Promise<ActionResult<ImportReport & { incomplete: boolean }>> {
   if (typeof repo !== 'string' || repo.trim() === '' || repo.length > 200) {
-    throw new Error('Enter a repository as owner/repo.');
+    return { ok: false, error: 'Enter a repository as owner/repo (e.g. Siddharthaaa21/strata).' };
   }
 
   try {
-    return await importGitHubRepo(repo);
+    const report = await importGitHubRepo(repo);
+    return { ok: true, report };
   } catch (e) {
     const code = (e as { code?: string })?.code;
-    // Mapped to sentences a person can act on. `rate-limited` names the fix, because hitting 60/hour
-    // unauthenticated is the single likeliest failure and looks like the feature being broken.
     const messages: Record<string, string> = {
-      'repo-invalid': 'That is not a repository. Use owner/repo, or a github.com URL.',
+      'repo-invalid': 'That is not a repository. Use owner/repo (e.g. Siddharthaaa21/strata), or a github.com URL.',
       'not-found': 'No such repository — or it is private and needs GITHUB_TOKEN in .env.',
       unauthorized: 'Not authorized. A private repository needs GITHUB_TOKEN with read access to Contents.',
       'rate-limited':
         'GitHub rate limit reached (60/hour without a token). Set GITHUB_TOKEN in .env for 5,000/hour.',
       network: 'Could not reach github.com.',
     };
-    if (code && messages[code]) throw new Error(messages[code]);
-    throw e instanceof Error ? new Error('That import failed.') : e;
+    const msg = (code && messages[code]) || (e instanceof Error ? e.message : 'That import failed.');
+    return { ok: false, error: msg };
+  }
+}
+
+/**
+ * Disconnects a source and soft-deletes its documents.
+ */
+export async function disconnectSource(
+  sourceId: string,
+): Promise<ActionResult<{ disconnected: string }>> {
+  if (typeof sourceId !== 'string' || sourceId.trim() === '') {
+    return { ok: false, error: 'Invalid source ID.' };
+  }
+
+  try {
+    await disconnectSourceAction(sourceId.trim());
+    revalidatePath('/import');
+    revalidatePath('/');
+    return { ok: true, report: { disconnected: sourceId } };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Failed to disconnect source.';
+    return { ok: false, error: msg };
   }
 }

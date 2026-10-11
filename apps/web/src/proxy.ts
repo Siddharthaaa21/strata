@@ -75,7 +75,7 @@ export async function proxy(request: NextRequest) {
   // Unconfigured, or running on the local dev issuer, whose cookie this code path knows nothing
   // about. Passing through is right in both cases: middleware is an optimisation on session
   // lifetime, never a gate, and a gate that fails open would be a bug where this is merely a no-op.
-  if (!url || !anonKey) return passThrough(request);
+  if (!url || !anonKey || process.env['STRATA_DEV_AUTH'] === '1') return passThrough(request);
 
   const cookies = new Map(request.cookies.getAll().map((c) => [c.name, c.value]));
   const token = accessTokenFromCookies(cookies, url);

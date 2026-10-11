@@ -15,7 +15,7 @@ import 'server-only';
  * a bug.
  */
 
-import type { Scope, SourceId } from '@strata/core';
+import { normalizeIngested, type Scope, type SourceId } from '@strata/core';
 import {
   createGitHubHttpPort,
   createMemoryFileSystemPort,
@@ -189,6 +189,8 @@ export async function importGitHubRepo(input: string): Promise<ImportReport & { 
   // Optional. Absent means public repositories only, at GitHub's unauthenticated 60/hour.
   const token = process.env['GITHUB_TOKEN']?.trim();
 
+  const repoFolder = `${ref.owner}/${ref.repo}`;
+
   const scanned = await scanGitHubRepo(
     createGitHubHttpPort(token === '' ? undefined : token),
     ref,
@@ -198,13 +200,22 @@ export async function importGitHubRepo(input: string): Promise<ImportReport & { 
     { maxFiles: 150 },
   );
 
+  const pendingWithFolder = scanned.pending.map((p) => ({
+    ...p,
+    folder: {
+      ...p.folder,
+      value: normalizeIngested(repoFolder),
+      provenance: 'source' as const,
+    },
+  }));
+
   const report = await ingestPending(
     scope,
     sourceId,
-    `${ref.owner}/${ref.repo}`,
+    repoFolder,
     'github',
-    `Markdown indexed from github.com/${ref.owner}/${ref.repo}`,
-    scanned.pending,
+    `Markdown indexed from github.com/${repoFolder}`,
+    pendingWithFolder,
     scanned.failures,
   );
 
