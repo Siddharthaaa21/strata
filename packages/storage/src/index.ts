@@ -171,11 +171,15 @@ CREATE TABLE IF NOT EXISTS user_identities (
   PRIMARY KEY (provider, subject)
 );
 
--- Referenceable target for the composite foreign key below. Redundant with the primary key on its
--- own, and that is the point: it lets a child row require that a grant belongs to a named principal.
-ALTER TABLE grants DROP CONSTRAINT IF EXISTS grants_principal_identity;
-ALTER TABLE grants ADD CONSTRAINT grants_principal_identity
-  UNIQUE (workspace_id, id, principal_id);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'grants_principal_identity'
+  ) THEN
+    ALTER TABLE grants ADD CONSTRAINT grants_principal_identity
+      UNIQUE (workspace_id, id, principal_id);
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS agent_tokens (
   -- NOT workspace-scoped, and this is the one deliberate exception to the leading-workspace_id

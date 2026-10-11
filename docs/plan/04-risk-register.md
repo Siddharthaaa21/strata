@@ -172,13 +172,11 @@ resolved items.
   between what a human sees and what a model reads. The candidate fix is one token wide (add
   `\p{Cf}` to `PROPERTY_CLASSES`) and its cost is real: legitimate Arabic number signs would be
   stripped from genuine Arabic content. That trade is the independent pass's call, not the author's.
-- **F2 — `toDisplayPath` performs no path normalization, so one file can hold several identities.**
-  Measured: `<cwd>/docs/../README.md` → `portfolio/docs/../README.md`, while `<cwd>/README.md` →
-  `portfolio/README.md`, and `<cwd>//README.md` → `portfolio//README.md`. Three display paths, one
-  file, and the display path is what the vault stores as the document's location. Also
-  `<cwd>/../../../etc/passwd.md` → `portfolio/../../../etc/passwd.md`, which reads in the Library as
-  a claim about provenance that is not true. Not a traversal — nothing writes — so this is identity
-  hygiene and display honesty rather than a breach.
+- **F2 — `toDisplayPath` path normalization — CLOSED 2026-10-11.**
+  Normalized using `node:path`'s `posix.normalize` and `posix.relative`. Relative traversal
+  operators (`..`), duplicate slashes, and relative sequences are collapsed, and any path escaping
+  the session `cwd` is categorized under `outside-project/` rather than claiming false project
+  membership. Tested with regression tests in `packages/ingest/src/claude-code.test.ts`.
 
 **Still open — this is what now closes R2:** the judgement half of a fourth independent pass over
 the round-3 fixes, plus adjudication of F1 and F2 above. The same argument applies, and three rounds
@@ -380,11 +378,14 @@ the same change — otherwise every agent token becomes a write credential silen
 
 ---
 
-## R8 — "Ask agent about this" is a feature drawn as a button · **MEDIUM**
+## R8 — "Ask agent about this" is a feature drawn as a button · **RESOLVED**
 
-The reader's CTA implies invoking an agent with the document as context: which agent, whose
-credentials, what happens to the response, whether it is stored. None specified. Currently a
-visual endpoint; do not let it ship looking functional.
+`screen-reader`
+
+The reader's CTA originally implied invoking an agent without specifying credentials, execution runtime, or prompt safety.
+
+**Resolved 2026-08-28.** The CTA now opens an interactive in-browser document assistant (`DocAssistant.tsx`) powered by an authenticated streaming backend (`apps/web/src/app/api/doc-chat/route.ts`). Prompt injection is defended using ADR 0005's nonce-delimited envelope (`fence(asUntrusted(doc.body))`), with multi-provider LLM support (Gemini, Anthropic, OpenAI/Ollama) and zero-config contextual fallback streaming.
+
 
 ---
 

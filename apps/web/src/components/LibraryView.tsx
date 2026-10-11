@@ -1,12 +1,34 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { DocListItem, SourceListItem } from '../lib/vault';
+import { relativeTime } from '../lib/relative-time';
 import { DocCard } from './DocCard';
 import styles from './LibraryScreen.module.css';
 
 const ALL = 'All';
+
+function DocListRow({ doc, showFolder = false }: { doc: DocListItem; showFolder?: boolean }) {
+  return (
+    <Link href={`/reader/${doc.id}`} className={styles.listRow} title={`Open ${doc.title}`}>
+      <div className={styles.listLeft}>
+        <span className={styles.listIcon}>📄</span>
+        <div className={styles.listText}>
+          <span className={styles.listTitle}>{doc.title}</span>
+          {doc.excerpt && <span className={styles.listExcerpt}>{doc.excerpt}</span>}
+        </div>
+      </div>
+      <div className={styles.listRight}>
+        {showFolder && doc.folder && (
+          <span className={styles.listFolderBadge}>{doc.folder}</span>
+        )}
+        <span className={styles.listTime}>{relativeTime(doc.updatedAt)}</span>
+        <span className={styles.listArrow}>→</span>
+      </div>
+    </Link>
+  );
+}
 
 /**
  * The interactive half of screen-library.
@@ -59,6 +81,9 @@ export function LibraryView({
   firstOnPage?: number;
   lastOnPage?: number;
 }) {
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+
   const searching = query !== '';
   const sourcesById = useMemo(
     () => new Map(sources.map((s) => [s.id, s])),
@@ -70,6 +95,26 @@ export function LibraryView({
   // would have surfaced them was itself hidden by the truncation that hid them.
   const folders = useMemo(() => [ALL, ...allFolders], [allFolders]);
   const activeFilter = folder === '' ? ALL : folder;
+
+  const toggleFolder = (name: string) => {
+    setCollapsedFolders((prev) => ({ ...prev, [name]: !prev[name] }));
+  };
+
+  // Group docs by folder when viewing All and not searching
+  const docsByFolder = useMemo(() => {
+    if (activeFilter !== ALL || searching) return null;
+    const map = new Map<string, DocListItem[]>();
+    for (const d of docs) {
+      const f = d.folder || 'Other';
+      const list = map.get(f);
+      if (list) {
+        list.push(d);
+      } else {
+        map.set(f, [d]);
+      }
+    }
+    return [...map.entries()];
+  }, [docs, activeFilter, searching]);
 
   /** A same-screen link that changes one thing and drops the page, so every move lands on page 1. */
   const href = (over: { folder?: string; page?: number }) => {
@@ -119,39 +164,113 @@ export function LibraryView({
               connected.length ? ` from ${connected.join(', ')}` : ''
             }.`
           )}
-          {/*
-            The truncation note that used to live here is GONE, and its absence is the point.
-            It read "Showing the 50 most recently updated" — honest when the other documents were
-            genuinely unreachable, and false the moment paging landed (D28). Left in place it
-            contradicted the pager sitting directly beneath it, which says "1-50 of 55" next to a
-            link that reaches the rest. The count in the subtitle plus the pager say everything the
-            note used to, and say it accurately.
-          */}
         </p>
       </div>
 
       {docs.length > 0 && (
-        <div className={styles.filterRow}>
-          {folders.map((name) => (
-            <Link
-              key={name}
-              href={href({ folder: name === ALL ? '' : name, page: 1 })}
-              className={`${styles.pill} ${activeFilter === name ? styles.pillActive : ''}`}
-              // Announces which pill is the current one to a screen reader, which colour alone does
-              // not. `page` because these navigate rather than toggle a control.
-              aria-current={activeFilter === name ? 'page' : undefined}
+        <div className={styles.toolbar}>
+          <div className={styles.filterRow}>
+            {folders.map((name) => (
+              <Link
+                key={name}
+                href={href({ folder: name === ALL ? '' : name, page: 1 })}
+                className={`${styles.pill} ${activeFilter === name ? styles.pillActive : ''}`}
+                // Announces which pill is the current one to a screen reader, which colour alone does
+                // not. `page` because these navigate rather than toggle a control.
+                aria-current={activeFilter === name ? 'page' : undefined}
+              >
+                {name}
+              </Link>
+            ))}
+          </div>
+
+          <div className={styles.viewModeToggle} role="group" aria-label="View mode">
+            <button
+              type="button"
+              className={`${styles.viewModeBtn} ${viewMode === 'grid' ? styles.viewModeBtnActive : ''}`}
+              onClick={() => setViewMode('grid')}
+              title="Cards view"
             >
-              {name}
-            </Link>
-          ))}
+              ⊞ Cards
+            </button>
+            <button
+              type="button"
+              className={`${styles.viewModeBtn} ${viewMode === 'list' ? styles.viewModeBtnActive : ''}`}
+              onClick={() => setViewMode('list')}
+              title="List view"
+            >
+              ☰ List
+            </button>
+          </div>
         </div>
       )}
 
-      <div className={styles.grid}>
-        {docs.map((doc) => (
-          <DocCard key={doc.id} doc={doc} source={sourcesById.get(doc.sourceId)} />
-        ))}
-      </div>
+      {docsByFolder ? (
+        <div className={styles.folderSections}>
+          {docsByFolder.map(([folderName, folderDocs]) => {
+            const isCollapsed = Boolean(collapsedFolders[folderName]);
+            return (
+              <div key={folderName} className={styles.folderSection}>
+                <div className={styles.folderHeaderRow}>
+                  <div className={styles.folderHeaderLeft}>
+                    <span className={styles.folderIcon}>📁</span>
+                    <h2 className={styles.folderTitle}>{folderName}</h2>
+                    <span className={styles.folderCountBadge}>
+                      {folderDocs.length} {folderDocs.length === 1 ? 'doc' : 'docs'}
+                    </span>
+                  </div>
+                  <div className={styles.folderHeaderRight}>
+                    <Link
+                      href={href({ folder: folderName, page: 1 })}
+                      className={styles.folderFilterLink}
+                    >
+                      Focus folder →
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => toggleFolder(folderName)}
+                      className={styles.folderToggleBtn}
+                      aria-expanded={!isCollapsed}
+                    >
+                      {isCollapsed ? 'Expand ▾' : 'Collapse ▴'}
+                    </button>
+                  </div>
+                </div>
+
+                {!isCollapsed && (
+                  viewMode === 'grid' ? (
+                    <div className={styles.grid}>
+                      {folderDocs.map((doc) => (
+                        <DocCard key={doc.id} doc={doc} source={sourcesById.get(doc.sourceId)} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={styles.listContainer}>
+                      {folderDocs.map((doc) => (
+                        <DocListRow key={doc.id} doc={doc} showFolder={false} />
+                      ))}
+                    </div>
+                  )
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        viewMode === 'grid' ? (
+          <div className={styles.grid}>
+            {docs.map((doc) => (
+              <DocCard key={doc.id} doc={doc} source={sourcesById.get(doc.sourceId)} />
+            ))}
+          </div>
+        ) : (
+          <div className={styles.listContainer}>
+            {docs.map((doc) => (
+              <DocListRow key={doc.id} doc={doc} showFolder={true} />
+            ))}
+          </div>
+        )
+      )}
 
       {/*
         Paging, which the Library did not have. Before this the newest 50 documents were the only

@@ -33,8 +33,15 @@ export function GitHubConnect({ color }: { color: string }) {
       setFailed(false);
       try {
         const { importGitHub } = await import('../app/import/actions');
-        const report = await importGitHub(repo.trim());
+        const res = await importGitHub(repo.trim());
 
+        if (!res.ok) {
+          setFailed(true);
+          setMessage(res.error);
+          return;
+        }
+
+        const report = res.report;
         const parts = [
           report.created > 0 ? `${report.created} new` : '',
           report.updated > 0 ? `${report.updated} updated` : '',

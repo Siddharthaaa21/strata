@@ -1,4 +1,5 @@
 import { ConnectorRow } from './ConnectorRow';
+import { RecentFolderRow } from './RecentFolderRow';
 import { relativeTime } from '../lib/relative-time';
 import { loadImport } from '../lib/vault';
 import styles from './ImportScreen.module.css';
@@ -39,7 +40,7 @@ const PLACEHOLDER_CONNECTORS = [
 ] as const;
 
 export async function ImportScreen() {
-  const { sources, recent, failures } = await loadImport();
+  const { sources, recentGroups, failures } = await loadImport();
   const bySourceId = new Map(sources.map((s) => [s.id, s]));
 
   const connectors = PLACEHOLDER_CONNECTORS.map((c) => {
@@ -123,16 +124,13 @@ export async function ImportScreen() {
       <div>
         <h2 className={styles.sectionLabel}>Recent imports</h2>
         <div className={styles.recentList}>
-          {recent.length === 0 ? (
+          {recentGroups.length === 0 ? (
             <div className={styles.recentRow}>
               <div className={styles.recentTitle}>Nothing imported yet.</div>
             </div>
           ) : (
-            recent.map((r) => (
-              <div key={r.id} className={styles.recentRow}>
-                <div className={styles.recentTitle}>{r.title}</div>
-                <span className={styles.recentTime}>{relativeTime(r.occurredAt)}</span>
-              </div>
+            recentGroups.map((group) => (
+              <RecentFolderRow key={group.folder} group={group} />
             ))
           )}
         </div>

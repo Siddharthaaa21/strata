@@ -118,3 +118,39 @@
 .repoInput:disabled {
   opacity: 0.6;
 }
+
+.statusAndAction {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.disconnectWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.disconnectButton {
+  background: none;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-tile);
+  padding: 3px 9px;
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.disconnectButton:hover:not(:disabled) {
+  color: var(--source-claude-fg);
+  border-color: var(--source-claude-fg);
+  background: var(--surface-sunken);
+}
+
+.disconnectButton:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}

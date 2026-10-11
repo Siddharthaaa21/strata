@@ -106,6 +106,21 @@ test('a file written outside the project is kept, under its own prefix', () => {
   assert.equal(parseTranscript(jsonl)[0]!.displayPath, 'outside-project/.claude/skills/thing/SKILL.md');
 });
 
+test('paths are normalized: .. and duplicate slashes collapse, traversals leave the project (F2)', () => {
+  const jsonl = [
+    record('Write', { file_path: `${CWD}/docs/../README.md`, content: '# Root\n' }),
+    record('Write', { file_path: `${CWD}//sub//doc.md`, content: '# Sub\n' }),
+    record('Write', { file_path: `${CWD}/../../etc/passwd.md`, content: '# Secret\n' }),
+  ].join('\n');
+
+  const files = parseTranscript(jsonl);
+  assert.equal(files.length, 3);
+  assert.equal(files[0]!.displayPath, 'portfolio/README.md');
+  assert.equal(files[1]!.displayPath, 'portfolio/sub/doc.md');
+  assert.match(files[2]!.displayPath, /^outside-project\//);
+  assert.ok(!files[2]!.displayPath.startsWith('portfolio/'));
+});
+
 test('a truncated final line does not lose the records before it', () => {
   // A transcript being appended to right now ends mid-line. This is the ordinary state of an active
   // session, not an edge case.

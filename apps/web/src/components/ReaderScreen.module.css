@@ -247,9 +247,11 @@
   }
 }
 
-/* The disabled state for the R8 dead-end CTA. Deliberately reads as unavailable rather than merely
- * inert: an accent-filled control that does nothing on click is worse than one that visibly cannot
- * be clicked, because the first teaches the user the app is broken. */
+.cta:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+/* The disabled state for when the assistant is busy or unavailable */
 .cta:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -263,3 +265,203 @@
   color: var(--ink-faint);
   text-align: center;
 }
+
+/* Assistant Drawer */
+.assistantDrawer {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-structural);
+  border-radius: var(--radius-card);
+  margin-top: var(--space-reader-rail-gap);
+  padding: 14px;
+  gap: 10px;
+  max-height: 480px;
+}
+
+.assistantHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.assistantBrand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistantDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+}
+
+.assistantTitle {
+  font-size: var(--text-nav);
+  font-weight: 600;
+  color: var(--ink-strong);
+}
+
+.assistantClose {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.assistantClose:hover {
+  background: var(--surface-chip);
+  color: var(--ink-strong);
+}
+
+.assistantContextBar {
+  font-size: var(--text-micro);
+  color: var(--ink-subtle);
+  background: var(--surface-page);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-hairline);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.contextDocName {
+  font-weight: 500;
+}
+
+.assistantMessages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 120px;
+  max-height: 240px;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+.assistantEmpty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.emptyHeading {
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--ink-strong);
+  margin: 0;
+}
+
+.emptySubtitle {
+  font-size: var(--text-micro);
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+.promptChips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.chipButton {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font-size: var(--text-small);
+  text-align: left;
+  color: var(--ink-body);
+  cursor: pointer;
+  transition: var(--motion-card-transition);
+}
+
+.chipButton:hover {
+  border-color: var(--border-structural);
+  background: var(--surface-chip);
+  color: var(--ink-strong);
+}
+
+.userMessageWrap {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.userBubble {
+  background: var(--surface-chip);
+  border: 1px solid var(--border-hairline);
+  border-radius: 12px 12px 2px 12px;
+  padding: 8px 12px;
+  font-size: var(--text-small);
+  color: var(--ink-strong);
+  max-width: 90%;
+  word-break: break-word;
+}
+
+.assistantMessageWrap {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.assistantBubble {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: 12px 12px 12px 2px;
+  padding: 10px 12px;
+  font-size: var(--text-small);
+  color: var(--ink-body);
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.typingIndicator {
+  font-size: var(--text-micro);
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+.assistantForm {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.assistantInput {
+  flex: 1;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  padding: 6px 10px;
+  font-size: var(--text-small);
+  font-family: inherit;
+  color: var(--ink-base);
+  outline: none;
+}
+
+.assistantInput:focus {
+  border-color: var(--accent);
+}
+
+.assistantSubmit {
+  border: none;
+  background: var(--ink-nav-inactive);
+  color: var(--ink-inverse);
+  font-weight: 600;
+  border-radius: var(--radius-control);
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.assistantSubmit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+

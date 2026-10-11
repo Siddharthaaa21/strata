@@ -307,9 +307,5 @@ export function docIdentityKey(identity: DocIdentity): string {
   return `${identity.sourceId}\u0000${identity.externalId}\u0000${identity.contentHash}`;
 }
 
-/**
- * Fixture data for fixture-driven UI (D8). Re-exported from the package entry so screens never
- * import `./fixtures` directly by relative path -- `@strata/core` is the only import surface.
- */
-export * from "./untrusted.ts";
-export * from "./fixtures.ts";
+export * from './untrusted.ts';
+

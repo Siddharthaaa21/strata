@@ -35,6 +35,10 @@
   line-height: var(--leading-card-title);
   color: var(--ink-title);
   margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .excerpt {
@@ -42,6 +46,10 @@
   color: var(--ink-muted);
   line-height: var(--leading-card-excerpt);
   flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .meta {
