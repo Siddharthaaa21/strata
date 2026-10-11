@@ -20,6 +20,7 @@
  * own body. A stale document that admits it is stale is useful; one that does not is a trap.
  */
 
+import { posix } from 'node:path';
 import { createMemoryFileSystemPort, type MemoryFile } from './fs-port.ts';
 import { scanMarkdown, type ScanResult } from './markdown.ts';
 import type { SourceId } from '@strata/core';
@@ -59,20 +60,37 @@ function isDocument(path: string, extensions: readonly string[]): boolean {
   return extensions.some((e) => lower.endsWith(e));
 }
 
-/** `/Users/x/Desktop/proj/docs/a.md` under cwd `/Users/x/Desktop/proj` -> `proj/docs/a.md`. */
+/**
+ * `/Users/x/Desktop/proj/docs/a.md` under cwd `/Users/x/Desktop/proj` -> `proj/docs/a.md`.
+ * Normalizes traversal operators (..), repeated slashes, and checks true containment (F2).
+ */
 function toDisplayPath(absolutePath: string, cwd: string): string {
   const home = process.env['HOME'] ?? '';
-  if (cwd !== '' && absolutePath.startsWith(cwd + '/')) {
-    const projectName = cwd.split('/').filter(Boolean).pop() ?? 'project';
-    return `${projectName}/${absolutePath.slice(cwd.length + 1)}`;
+  const normalizedPath = posix.normalize(absolutePath);
+  const normalizedCwd = cwd !== '' ? posix.normalize(cwd) : '';
+  const normalizedHome = home !== '' ? posix.normalize(home) : '';
+
+  if (normalizedCwd !== '') {
+    const rel = posix.relative(normalizedCwd, normalizedPath);
+    if (!rel.startsWith('..') && !posix.isAbsolute(rel)) {
+      const projectName = normalizedCwd.split('/').filter(Boolean).pop() ?? 'project';
+      return rel === '' ? projectName : `${projectName}/${rel}`;
+    }
   }
+
   // Written outside the session's project — Claude Code does this for skills, settings and
   // scratch files. Kept under a distinct prefix rather than dropped: those are still documents,
   // and silently discarding them would reproduce the exact problem this adapter exists to fix.
-  if (home !== '' && absolutePath.startsWith(home + '/')) {
-    return `outside-project/${absolutePath.slice(home.length + 1)}`;
+  if (normalizedHome !== '') {
+    const rel = posix.relative(normalizedHome, normalizedPath);
+    if (!rel.startsWith('..') && !posix.isAbsolute(rel)) {
+      return rel === '' ? 'outside-project' : `outside-project/${rel}`;
+    }
   }
-  return `outside-project${absolutePath}`;
+
+  return normalizedPath.startsWith('/')
+    ? `outside-project${normalizedPath}`
+    : `outside-project/${normalizedPath}`;
 }
 
 /**
